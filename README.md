@@ -7,7 +7,7 @@ Caesar is an orchestration framework for multi-turn generations on [KernelBench]
 
 Designed by [@simonguozirui](https://github.com/simonguozirui) and [@alexzhang13](https://github.com/alexzhang13) for the [KernelBench paper](https://arxiv.org/abs/2502.10517), specifically Section `5.1.2`.
 
-## Multi-Turn
+## Multi-Turn Generations
 Kernel generation and optimization is inherently an **iterative** process: performance engineers write an implementation, check its correctness, and profiles its runtime (with tools) to find bottlenecks, and repeat this process over and over again.
 
 Thus, it makes sense to scale test-time compute sequentially (iterative refinement). Caesar is designed to generate multi-turn trajectories in a batch / **high-throughput** setting.
