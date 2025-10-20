@@ -19,20 +19,12 @@ from utils import check_result_exists, timeout
 
 from transitions_def import MyTransition, Reflection, Reflection_NVCC
 
-from monkeys.problems.kernelbench_gen_level_1 import (
-    DATASET as KERNELBENCH_LEVEL_1_DATASET,
-    SUBSET_DATASET as KERNELBENCH_LEVEL_1_SUBSET_DATASET,
+from KernelBenchInternal.dataset import (
+    KernelBenchDataset,
+    KERNELBENCH_LEVEL_1_DATASET, KERNELBENCH_LEVEL_1_SUBSET_DATASET,
+    KERNELBENCH_LEVEL_2_DATASET, KERNELBENCH_LEVEL_2_SUBSET_DATASET,
+    KERNELBENCH_LEVEL_3_DATASET, KERNELBENCH_LEVEL_3_SUBSET_DATASET,
 )
-from monkeys.problems.kernelbench_gen_level_2 import (
-    DATASET as KERNELBENCH_LEVEL_2_DATASET,
-    SUBSET_DATASET as KERNELBENCH_LEVEL_2_SUBSET_DATASET,
-)
-from monkeys.problems.kernelbench_gen_level_3 import (
-    DATASET as KERNELBENCH_LEVEL_3_DATASET,
-    SUBSET_DATASET as KERNELBENCH_LEVEL_3_SUBSET_DATASET,
-)
-
-from monkeys.problems.problem_utils import KernelBenchDataset
 
 dataset_name_to_dataset = {
     "KernelBench/level1": KERNELBENCH_LEVEL_1_DATASET,
@@ -65,7 +57,7 @@ class CaesarRunConfig(Config):
         self.context_strategy = ["reflection"]
         # set to False for all previous generations
         # set to True for using only the latest generation
-        self.use_last_only = False 
+        self.use_last_only = False
         self.state_machine_strategy = "rerun" # default
         self.max_feedback_length = 100000 # in terms of characters, 10k, so much less in tokens
 
@@ -92,7 +84,7 @@ class CaesarRunConfig(Config):
         # Eval Speciifc
         self.num_correct_trials = 5
         self.num_perf_trials = 100
-        self.timeout = 600 # time out per round, set to 10 min 
+        self.timeout = 600 # time out per round, set to 10 min
         self.verbose = False
         self.show_state = False
         self.measure_performance = True
@@ -131,9 +123,9 @@ class CaesarRunConfig(Config):
         self.temperature = 0.8
         self.top_p = 1  # default per API docs
 
-    
+
     def together(self): # run llama
-        self.model_name = "meta-llama/Meta-Llama-3.1-70B-Instruct-Turbo"  # check this 
+        self.model_name = "meta-llama/Meta-Llama-3.1-70B-Instruct-Turbo"  # check this
         self.server_type = "together"
         self.temperature = 0.7
         self.max_tokens = 8192
@@ -164,7 +156,7 @@ def start_single_caesar(
     """
     Start a single caesar process
     """
-    
+
     print(f"Starting Caesar with process_id {process_id} and orchestrator {orchestrator}")
     # define state machine transition configs
     transitions = MyTransition()
@@ -194,7 +186,7 @@ def main(
 
     dataset = KernelBenchDataset(dataset_name=config.dataset_name, level=config.level, use_subset=config.use_subset, dataset=dataset_name_to_dataset[config.dataset_name], subset_dataset=dataset_name_to_subset_dataset[config.dataset_name])
     problem_ids = dataset.get_problem_ids()
-    
+
     problem_id = 23
     problem = dataset.get_problem_by_id(problem_id)
     sample_id = 0
@@ -217,19 +209,19 @@ def create_work_queue(config: CaesarRunConfig):
     """
 
     works :list[WorkArgs] = []
-    # Decide which problems we should run 
-    
-    dataset = KernelBenchDataset(dataset_name=config.dataset_name, 
-                                 level=config.level, 
-                                 use_subset=config.use_subset, 
-                                 dataset=dataset_name_to_dataset[config.dataset_name], 
+    # Decide which problems we should run
+
+    dataset = KernelBenchDataset(dataset_name=config.dataset_name,
+                                 level=config.level,
+                                 use_subset=config.use_subset,
+                                 dataset=dataset_name_to_dataset[config.dataset_name],
                                  subset_dataset=dataset_name_to_subset_dataset[config.dataset_name])
 
     if config.debug:
         problem_ids = [23] # just use one problem for debugging
     else:
         problem_ids = dataset.get_problem_ids()
-        
+
     # # create a list of Work
     for problem_id in problem_ids: # range(10):
         for sample_id in range(config.num_samples):
@@ -240,7 +232,7 @@ def create_work_queue(config: CaesarRunConfig):
                 problem = dataset.get_problem_by_id(problem_id)
                 curr_work = WorkArgs(problem=problem, problem_id=str(problem_id), sample_id=sample_id)
                 works.append(curr_work)
-            
+
     print(f"Created {len(works)} works")
     return works
 
@@ -270,21 +262,21 @@ def worker_process(
         print(f"[Heartbeat] Process {process_id} start of loop")
         try:
             work = mp_queue.get(timeout=1)
-            # if queue is empty it shuts down    
-            if work is None: 
+            # if queue is empty it shuts down
+            if work is None:
                 print(f"[Shutdown] Worker {process_id} received shutdown signal")
                 break
-        
+
             try:
                 print(f"[Launch] Worker {process_id} launching work {work}")
 
                 # Initialize logger here.
                 log_dir = os.path.join(config.log_dir_prefix, config.run_group, config.run_name, "problem_" + str(work.problem_id), "sample_" + str(work.sample_id))
                 logger = CaesarLogger(log_dir, config, work, verbose=config.verbose, log_name=f"log.json")
-                
+
                 # Create a queue for the inner process result
                 result_queue = mp.Queue()
-                
+
                 # Create and start the inner process
                 inner_process = mp.Process(
                     target=run_caesar_with_timeout,
@@ -301,7 +293,7 @@ def worker_process(
                             if inner_process.is_alive():
                                 inner_process.kill()  # Force kill if still alive
                             raise TimeoutError("Process timed out")
-                        
+
                         # Get the result if process completed
                         returncode = result_queue.get(timeout=1)
 
@@ -318,7 +310,7 @@ def worker_process(
                                     inner_process.kill()
                             mp_queue.put(work)
                             print(f"Work {work} added back to mp_queue.")
-                            
+
                             continue  # Continue to next work item instead of exiting
 
 
@@ -328,7 +320,7 @@ def worker_process(
                     # TODO: Write to the log.
                     logger._save_timeout_eval("Time limit reached: Kernel either hung or timed out.")
 
-                    print(f"[Orchestrator] Worker {process_id} timed out, shutting down... but adding Work {work} back to queue")  
+                    print(f"[Orchestrator] Worker {process_id} timed out, shutting down... but adding Work {work} back to queue")
                     mp_queue.put(work)
 
                     raise TimeoutError(f"Process timed out: {e}")
@@ -345,7 +337,7 @@ def worker_process(
                 # Optionally requeue the work item
                 # mp_queue.put(work)
                 continue
-                
+
             except Exception as e:
                 print(f"[Error] Worker {process_id} encountered error: {e}")
                 traceback.print_exc()
@@ -372,11 +364,11 @@ def main_orchestrator(config: CaesarRunConfig):
     progress_queue = mp.Queue()  # New queue for progress tracking
     total_work = create_work_queue(config)
     total_work_count = len(total_work)
-    
+
     if total_work_count == 0:
         print("[Orchestrator] No work to do, shutting down and exiting...")
         return
-    
+
     # populate the queue with work
     for work in total_work:
         job_queue.put(work)
@@ -385,7 +377,7 @@ def main_orchestrator(config: CaesarRunConfig):
         # Start worker processes
         for worker_id in range(config.num_workers):
             p = mp.Process(
-                target=worker_process, 
+                target=worker_process,
                 args=(job_queue, config, progress_queue),
                 kwargs={"process_id": worker_id, "orchestrator": orchestrator}
             )
