@@ -6,9 +6,15 @@ import os
 from pathlib import Path
 
 from viewer_utils import get_prev_problem_id, get_next_problem_id
-from caesar.analysis.analysis_utils import get_turn_trajectory_overviews, get_turns, load_run_data, get_available_runs, fetch_baseline_time_by_problem_id
 
-from caesar.utils import check_result_exists, get_run_group_stats
+# get root directory (i.e., the parent of 'interface')
+ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+# add sys paths
+sys.path.append(ROOT_DIR)
+sys.path.append(os.path.join(ROOT_DIR, 'analysis'))
+
+from analysis_utils import get_turn_trajectory_overviews, get_turns, load_run_data, get_available_runs, fetch_baseline_time_by_problem_id
+from utils import check_result_exists, get_run_group_stats
 
 from run_mapping import (
     RUN_MAPPING_LEVEL_1,
@@ -16,22 +22,14 @@ from run_mapping import (
     RUN_MAPPING_LEVEL_3
 )
 
-PATH_TO_REPO_DIR = os.path.dirname(os.getcwd()) # run from cuda_monkeys/caesar/
-
-from monkeys.problems.kernelbench_gen_level_1 import (
-    DATASET as KERNELBENCH_LEVEL_1_DATASET,
-    SUBSET_DATASET as KERNELBENCH_LEVEL_1_SUBSET_DATASET,
+from KernelBenchInternal.dataset import (
+    KernelBenchDataset,
+    KERNELBENCH_LEVEL_1_DATASET, KERNELBENCH_LEVEL_1_SUBSET_DATASET,
+    KERNELBENCH_LEVEL_2_DATASET, KERNELBENCH_LEVEL_2_SUBSET_DATASET,
+    KERNELBENCH_LEVEL_3_DATASET, KERNELBENCH_LEVEL_3_SUBSET_DATASET,
 )
-from monkeys.problems.kernelbench_gen_level_2 import (
-    DATASET as KERNELBENCH_LEVEL_2_DATASET,
-    SUBSET_DATASET as KERNELBENCH_LEVEL_2_SUBSET_DATASET
-) 
-from monkeys.problems.kernelbench_gen_level_3 import (
-    DATASET as KERNELBENCH_LEVEL_3_DATASET,
-    SUBSET_DATASET as KERNELBENCH_LEVEL_3_SUBSET_DATASET    
-) 
 
-from monkeys.problems.problem_utils import KernelBenchDataset
+PATH_TO_REPO_DIR = os.path.dirname(os.getcwd()) # run from cuda_monkeys/caesar/
 
 dataset_name_to_dataset = {
     "KernelBench/level1": KERNELBENCH_LEVEL_1_DATASET,
@@ -48,14 +46,11 @@ dataset_name_to_subset_dataset = {
 # Configuration
 PORT = 5008
 # path of where all the logs are stored
-BASE_LOG_DIR = "/matx/u/simonguo/kernel_multi_turn"
-
+BASE_LOG_DIR = "./caesar_outputs/"
 
 # Get timing comparisons
-baseline_time_filepath = os.path.join(PATH_TO_REPO_DIR, "KernelBenchInternal", "results", "timing", "L40S_matx3", "baseline_time_torch.json")
-baseline_torch_compile_time_filepath = os.path.join(PATH_TO_REPO_DIR, "KernelBenchInternal", "results", "timing", "L40S_matx3", "baseline_time_torch_compile_inductor_default.json")
-
-
+baseline_time_filepath = os.path.join(PATH_TO_REPO_DIR, "KernelBench", "results", "timing", "H100_tsubame", "baseline_time_torch.json")
+baseline_torch_compile_time_filepath = os.path.join(PATH_TO_REPO_DIR, "KernelBench", "results", "timing", "H100_tsubame", "baseline_time_torch_compile_inductor_default.json")
 
 
 def get_host_ip():
@@ -75,7 +70,7 @@ app, rt = fast_app()
 LEVELS = ["level1", "level2", "level3"]
 STRATEGIES = [
     "reflection_all_prev",
-    "reflection_last_only", 
+    "reflection_last_only",
     "eval_result_last_only",
     "eval_result_profiler_last_only"
 ]
@@ -146,7 +141,7 @@ def get(run_group: str):
     )
 
 @rt('/view_results')
-def post(run_group: str, run_name: str, problem_id: str, sample_id: str, use_subset: str = None):
+def get(run_group: str, run_name: str, problem_id: str, sample_id: str, use_subset: str = None):
 
     run_group_stats = Details(
         Summary("Run Group Stats [Done]", style="cursor: pointer; padding: 10px; background-color: #f0f0f0;"),
@@ -156,13 +151,13 @@ def post(run_group: str, run_name: str, problem_id: str, sample_id: str, use_sub
 
     # Add navigation buttons
     navigation_buttons = Div(
-        Button("Next Problem", 
+        Button("Next Problem",
             hx_post=f"/view_results",
             hx_vals=json.dumps({
                 "run_group": run_group,
-                "run_name": run_name, 
+                "run_name": run_name,
                 "problem_id": str(int(problem_id) + 1),
-                # "problem_id": str(get_next_problem_id(available_problems, int(problem_id))), 
+                # "problem_id": str(get_next_problem_id(available_problems, int(problem_id))),
                 "sample_id": str(sample_id),
                 "use_subset": use_subset
             }),
@@ -170,12 +165,12 @@ def post(run_group: str, run_name: str, problem_id: str, sample_id: str, use_sub
             id="prev-problem-button"
         ),
         Button("Prev Problem",
-            hx_post=f"/view_results", 
+            hx_post=f"/view_results",
             hx_vals=json.dumps({
                 "run_group": run_group,
-                "run_name": run_name, 
+                "run_name": run_name,
                 "problem_id": str(int(problem_id) - 1),
-                # "problem_id": str(get_prev_problem_id(available_problems, int(problem_id))), 
+                # "problem_id": str(get_prev_problem_id(available_problems, int(problem_id))),
                 "sample_id": str(sample_id),
                 "use_subset": use_subset
             }),
@@ -199,14 +194,13 @@ def post(run_group: str, run_name: str, problem_id: str, sample_id: str, use_sub
     ui_elements.append(run_group_stats)
     ui_elements.append(navigation_buttons)
 
-
     # TODO Navigate even if it doesn't exist, the problems is to constct the database object
     if not check_result_exists(log_dir_prefix=BASE_LOG_DIR, run_group=run_group, run_name=run_name, problem_id=int(problem_id), sample_id=int(sample_id)):
         not_found_content = Div(
             P(f"Result not found for Run Group {run_group} Run Name {run_name} Problem ID {problem_id} Sample ID {sample_id}"),
             style="border: 2px solid red; padding: 10px; border-radius: 4px;"
         )
-    
+
         ui_elements.append(not_found_content)
 
         log_path = Path(os.path.join(BASE_LOG_DIR, run_group, run_name, f"problem_{problem_id}", f"sample_{sample_id}", "log.json"))
@@ -227,10 +221,11 @@ def post(run_group: str, run_name: str, problem_id: str, sample_id: str, use_sub
             )
             ui_elements.append(partial_log_content)
 
-        
+
         return ui_elements
 
     try:
+
         log_path = Path(os.path.join(BASE_LOG_DIR, run_group, run_name, f"problem_{problem_id}", f"sample_{sample_id}", "log.json"))
         config_path = Path(os.path.join(BASE_LOG_DIR, run_group, run_name, f"problem_{problem_id}", f"sample_{sample_id}", "config.json"))
 
@@ -240,9 +235,9 @@ def post(run_group: str, run_name: str, problem_id: str, sample_id: str, use_sub
         use_subset_bool = (use_subset == "true")
         dataset = KernelBenchDataset(
             dataset_name=config["dataset_name"],
-            level=config["level"], 
+            level=config["level"],
             use_subset=use_subset_bool,  # Use the checkbox value instead of config value
-            dataset=dataset_name_to_dataset[config["dataset_name"]], 
+            dataset=dataset_name_to_dataset[config["dataset_name"]],
             subset_dataset=dataset_name_to_subset_dataset[config["dataset_name"]]
         )
         available_problems = dataset.get_problem_ids()
@@ -252,8 +247,8 @@ def post(run_group: str, run_name: str, problem_id: str, sample_id: str, use_sub
         baseline_torch_compile_time = fetch_baseline_time_by_problem_id(level=config['level'], problem_id=int(problem_id), baseline_time_filepath=baseline_torch_compile_time_filepath).get("mean", -1)
 
         log_metadata = log_data["metadata"]
-        
-        assert log_metadata["run_name"] == run_name, f"Run name mismatch: {log_metadata['run_name']} != {run_name}" 
+
+        assert log_metadata["run_name"] == run_name, f"Run name mismatch: {log_metadata['run_name']} != {run_name}"
         assert str(log_metadata["problem_id"]) == str(problem_id), f"Problem ID mismatch: {log_metadata['problem_id']} != {problem_id}"
         assert str(log_metadata["sample_id"]) == str(sample_id), f"Sample ID mismatch: {log_metadata['sample_id']} != {sample_id}"
 
@@ -268,7 +263,7 @@ def post(run_group: str, run_name: str, problem_id: str, sample_id: str, use_sub
             P(
                 Span("Strategy:", style="font-weight: bold;"),
                 f" Max K: ", Code(config['max_k']), ", Context_strategy: ", Code(config['context_strategy'])
-            ),  
+            ),
             Details(
                 Summary("Detailed Configuration", style="cursor: pointer; padding: 10px; background-color: #f0f0f0;"),
                 Pre(json.dumps(config, indent=2), style="white-space: pre-wrap; background-color: #f8f8f8; padding: 10px; border-radius: 4px;"),
@@ -284,7 +279,7 @@ def post(run_group: str, run_name: str, problem_id: str, sample_id: str, use_sub
         # Get the performacne traj
         turn_compile_trajectory, turn_correct_trajectory, turn_runtime_trajectory = get_turn_trajectory_overviews(log_data, max_turns=max_turns)
         # print for DEBUG
-        # print(f"turn_compile_trajectory: {turn_compile_trajectory}")    
+        # print(f"turn_compile_trajectory: {turn_compile_trajectory}")
         # print(f"turn_correct_trajectory: {turn_correct_trajectory}")
         # print(f"turn_runtime_trajectory: {turn_runtime_trajectory}")
         plot_title = f"Runtime Trajectory for {run_name} - Problem {problem_id} - Sample {sample_id}"
@@ -340,7 +335,7 @@ def post(run_group: str, run_name: str, problem_id: str, sample_id: str, use_sub
                         }},
                         autosize: true
                     }};
-                    
+
                     Plotly.newPlot('runtime-plot', data, layout).then(function() {{
                         Plotly.Plots.resize('runtime-plot');
                     }});
@@ -425,7 +420,7 @@ def post(run_group: str, run_name: str, problem_id: str, sample_id: str, use_sub
 
         for turn in range(1, max_turns + 1):
             turn_data = log_data[str(turn)]
-            
+
             try:
 
                 # Create collapsible sections for each turn
@@ -461,11 +456,11 @@ def post(run_group: str, run_name: str, problem_id: str, sample_id: str, use_sub
                 )
             except Exception as e:
                 turn_content =  P(f"WARNING: Cannot access turn data for turn {turn}; potential Data Corruption", style="color: red;")
-            
+
             ui_elements.append(turn_content)
-        
+
         return Div(*ui_elements)
-    
+
     except Exception as e:
         error_trace = traceback.format_exc()
 
@@ -483,12 +478,12 @@ def get(level: str, strategy: str, model: str):
     try:
         mapping = {
             "level1": RUN_MAPPING_LEVEL_1,
-            "level2": RUN_MAPPING_LEVEL_2, 
+            "level2": RUN_MAPPING_LEVEL_2,
             "level3": RUN_MAPPING_LEVEL_3
         }[level]
-        
+
         run_info = mapping[strategy][model]
-        
+
         return Div(
             Input(
                 type="hidden",
@@ -496,7 +491,7 @@ def get(level: str, strategy: str, model: str):
                 value=run_info["run_group"]
             ),
             Input(
-                type="hidden", 
+                type="hidden",
                 name="run_name",
                 value=run_info["run_name"]
             ),
@@ -513,13 +508,13 @@ def get():
         "KernelBench Multi-Turn Viewer",
         Script("https://unpkg.com/htmx.org@1.9.10"),
         Script("https://unpkg.com/hyperscript.org@0.9.12"),
-        
+
         Div(
             Span("KernelBench Multi-Turn Viewer"),
             Span(f"{HOST_IP}:{PORT}", style="margin-left: auto; font-size: 0.6em;"),
             style="display: flex; justify-content: space-between; align-items: center; width: 100%; margin-bottom: 20px;"
         ),
-        
+
         Div(
             Form(
                 Div(
@@ -568,7 +563,7 @@ def get():
                     # Problem input
                     Div(
                         Input(
-                            type="number", 
+                            type="number",
                             name="problem_id",
                             placeholder="Problem ID",
                             min="1",
@@ -601,7 +596,7 @@ def get():
                         style="margin-bottom: 10px;"
                     ),
                     Button(
-                        "View Results", 
+                        "View Results",
                         type="submit",
                         style="background-color: green; color: white; width: 200px;"
                     ),

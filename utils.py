@@ -3,8 +3,8 @@ from typing import List
 import json
 from pydra import Config
 import signal
-from KernelBenchInternal.src.utils import read_file
-from KernelBenchInternal.src.eval import KernelExecResult
+from KernelBenchInternal.utils import read_file
+from KernelBenchInternal.eval import KernelExecResult
 ###########################
 # Prompt Construction
 
@@ -59,7 +59,7 @@ def prompt_generate_initial(arch_src: str, example_arch_src: str, example_new_ar
         ``` \n
         {example_arch_src}
         ``` \n
-        The example new arch with custom CUDA kernels looks like this: 
+        The example new arch with custom CUDA kernels looks like this:
         ```
         {example_new_arch_src}
         ``` \n
@@ -79,12 +79,12 @@ def prompt_generate_initial(arch_src: str, example_arch_src: str, example_new_ar
 
 def build_context_multi_turn(
         initial_prompt: str,
-        contexts: dict, 
-        kernels: dict, 
-        compiler_feedback: dict, 
+        contexts: dict,
+        kernels: dict,
+        compiler_feedback: dict,
         eval_result: dict,
         profiler_result: dict,
-        iteration: int, 
+        iteration: int,
         strategy: List[str] = [],
         use_last_only: bool = False,
         max_feedback_length: int = 4000,
@@ -103,25 +103,25 @@ def build_context_multi_turn(
         else:
             prompt += f"Here is your latest generation:\n"
             prompt += f"```\n{kernels[iteration - 1]}\n```\n"
-            prompt += construct_programatic_prompt_feedback(compiler_feedback=compiler_feedback[iteration - 1], 
-                                                            exec_result=eval_result[iteration - 1], 
+            prompt += construct_programatic_prompt_feedback(compiler_feedback=compiler_feedback[iteration - 1],
+                                                            exec_result=eval_result[iteration - 1],
                                                             profiler_feedback = profiler_result[iteration - 1] if iteration - 1 in profiler_result else "",
                                                             max_feedback_length=max_feedback_length,
                                                             use_pytorch_profiler=("profiler" in strategy)
                                                             )
         return prompt
 
-    
+
 
 
     # Reflection
     # Iterations are 1-indexed.
     for i in range(1, iteration, 1):
 
-      
+
         # Add what you generated
         if "reflection" in strategy:
-            
+
             # Only use the latest generation
             if use_last_only:
                 if i < iteration - 1: continue
@@ -167,14 +167,14 @@ EVAL_RESULT_INSTRUCTION_LAST_ONLY = """Name your new improved output architectur
 """
 
 
-def construct_programatic_prompt_feedback(compiler_feedback: str, 
-                                          exec_result: KernelExecResult, 
+def construct_programatic_prompt_feedback(compiler_feedback: str,
+                                          exec_result: KernelExecResult,
                                           profiler_feedback: str = "",
                                           max_feedback_length: int = 2000,
                                           use_pytorch_profiler: bool = False) -> str:
     """
     Construct programatic feedback from the given exec_result
-    input: 
+    input:
     - compiler_feedback: str, feedback from the compiler
     - exec_result: KernelExecResult, the result of the execution
     - profiler_feedback: str, table breakdown from the PyTorch profiler; only used if use_pytorch_profiler is True
@@ -192,7 +192,7 @@ def construct_programatic_prompt_feedback(compiler_feedback: str,
     # Case 1: Compilation Failure
     if not exec_result.compiled:
         feedback += "Your kernel failed to compile.\n\n"
-        # TODO: restrict length of compiler feedback        
+        # TODO: restrict length of compiler feedback
         feedback += f"Here is the compiler logs\n\n:"
         feedback += f"{compiler_feedback[:max_feedback_length]}\n\n"
         for key, value in metadata_without_hw_info.items():
@@ -228,15 +228,15 @@ def construct_programatic_prompt_feedback(compiler_feedback: str,
         feedback += EVAL_RESULT_INSTRUCTION_LAST_ONLY
         feedback += "Please try generating ModelNew again, while fixing the correctness issues."
         return feedback
-    
+
     # Case 3: Runtime Success
     if exec_result.correctness:
         feedback += "Your kernel executed successfully and produced the correct output. \n\n"
         feedback += f"Here is your wall clock time: {exec_result.runtime} milliseconds \n\n"
 
         # ADD PROFILER
-        if use_pytorch_profiler: 
-            assert len(profiler_feedback) > 0, "Profiler feedback is empty"    
+        if use_pytorch_profiler:
+            assert len(profiler_feedback) > 0, "Profiler feedback is empty"
             feedback += f"Your Kernel was profiled with the PyTorch Profiler over many iterations, below is a table breakdown of the CUDA kernel execution time: \n\n"
 
             feedback += f"```\n{profiler_feedback[:max_feedback_length]}\n```\n\n"
@@ -255,7 +255,7 @@ def ensure_json_serializable(obj):
     """
     Recursively convert any object into a JSON serializable format.
     Handles nested dictionaries, lists, and custom objects.
-    
+
     Args:
         obj: Any Python object
     Returns:
