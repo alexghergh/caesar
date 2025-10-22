@@ -15,18 +15,18 @@ import torch
 import signal
 
 from eval import (
-    compile_single_sample, 
-    evaluate_single_sample_src, 
-    get_kernel_hash, 
+    compile_single_sample,
+    evaluate_single_sample_src,
+    get_kernel_hash,
     get_torch_profiler_info
 )
-from src.eval import build_compile_cache_with_capturing
 from states import CaesarState, StateOutcome, WorkArgs
 from logger import CaesarLogger
 from utils import build_context_multi_turn, prompt_generate_initial_from_template, timeout
 from orchestrator import GPUOrchestrator
-from KernelBenchInternal.src import eval as kernel_eval
-from KernelBenchInternal.src.utils import (
+from KernelBenchInternal import eval as kernel_eval
+from KernelBenchInternal.eval import build_compile_cache_with_capturing
+from KernelBenchInternal.utils import (
     extract_last_code,
     query_server,
     extract_first_code,
@@ -121,7 +121,7 @@ class CaesarStateMachine:
         print(saved_log.keys())
 
         # Load turn data
-        for turn in range(1, self.max_k+1, 1): 
+        for turn in range(1, self.max_k+1, 1):
             turn_str = str(turn)
 
             # The first turn that is not recorded in the log
@@ -133,7 +133,7 @@ class CaesarStateMachine:
 
             # current turn
             turn_data = saved_log[turn_str]
-            
+
             self.context[turn] = turn_data.get("context", "")
             self.model_response[turn] = turn_data.get("model_response", "")
             self.kernel_code[turn] = turn_data.get("kernel_code", "")
@@ -145,7 +145,7 @@ class CaesarStateMachine:
             if self.context[turn] == "" or self.model_response[turn] == "" or (self.kernel_code[turn] == "" and self.feedback_code[turn] == ""):
                 self.current_k = turn - 1
                 break
-            
+
             # In an actually valid run, convert str to EvalResult
             self.eval_result[turn] = self.logger.exec_log_to_obj(self.eval_result[turn])
 
@@ -187,7 +187,7 @@ class CaesarStateMachine:
             "problem_" + str(self.problem_id),
             "sample_" + str(self.sample_id),
         )
-        
+
 
     def run(self) -> int:
         """
@@ -367,7 +367,7 @@ class CaesarStateMachine:
             print("Compile returncode", returncode)
             print("Compile stdout", stdout)
             print("Compile stderr", err)
-        
+
         compiler_feedback = None
         if returncode == 0:
             self.outcome = StateOutcome.CPUCompileSuccess
@@ -405,13 +405,13 @@ class CaesarStateMachine:
 
         if self.orchestrator is not None:
             print(f"[Worker] Process {self.process_id} requesting GPU...")
-            
+
             with self.orchestrator.reserve_gpu() as gpu_id:
                 try:
                     print(f"[Worker] Process {self.process_id} acquired GPU {gpu_id}")
                     # Put Eval Code Here
                     device = torch.device(f"cuda:{gpu_id}")
-                
+
                     if self.config.mock:
                         # Simulate some GPU computation
                         work_time = random.uniform(1, 5)
@@ -436,7 +436,7 @@ class CaesarStateMachine:
                         # pseudo code
                         # if result.correctness:
                             # we call profiler and record it to some field we have
-                        
+
                         self.eval_result[self.current_k] = result
                         work_time = time.time() - start_time
 
@@ -448,8 +448,8 @@ class CaesarStateMachine:
 
                             if result.compiled:
                                 if result.correctness:
-                                    # Enable PyTorch profiling 
-                                
+                                    # Enable PyTorch profiling
+
                                     if "profiler" in self.config.context_strategy:
                                         print(
                                             f"[Worker] Process {self.process_id} using PyTorch profiler to profile on GPU {gpu_id} ({device})"
@@ -560,13 +560,13 @@ class CaesarStateMachine:
 
         if self.orchestrator is not None:
             print(f"[Worker] Process {self.process_id} requesting GPU...")
-            
+
             with self.orchestrator.reserve_gpu() as gpu_id:
                 try:
                     print(f"[Worker] Process {self.process_id} acquired GPU {gpu_id}")
                     # Put Eval Code Here
                     device = torch.device(f"cuda:{gpu_id}")
-                
+
                     if self.config.mock:
                         return
                     else:
@@ -629,7 +629,7 @@ class CaesarStateMachine:
 
         # Log results as last run if applicable.
         if self.current_k > self.max_k:
-            # Final eval step, this only happens in the last round 
+            # Final eval step, this only happens in the last round
             assert self.current_k == self.max_k + 1, "Final eval step should only happen in the last round"
 
             if self.current_k > 1:
@@ -656,7 +656,7 @@ class CaesarStateMachine:
                     self.eval_result.get(self.current_k, ""),
                     last=True,
                 )
-        
+
             # Mark that this run is finished:
             with open(os.path.join(self.log_dir, "DONE"), "w") as f:
                 pass

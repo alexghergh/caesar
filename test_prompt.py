@@ -7,12 +7,12 @@ import signal
 
 
 from utils import construct_programatic_feedback
-from KernelBenchInternal.src.eval import KernelExecResult
+from KernelBenchInternal.eval import KernelExecResult
 ###########################
 # Prompt Construction
 
 
-# Template 
+# Template
     # sample_exec_result = KernelExecResult(
     #     compiled=False,
     #     correctness=False,
@@ -28,7 +28,7 @@ from KernelBenchInternal.src.eval import KernelExecResult
 # Test Cases
 # A representative set of samples
 ###########################
-# 
+#
 
 def test_compiled_fail_feedback():
 
@@ -37,7 +37,7 @@ def test_compiled_fail_feedback():
         correctness=False,
         metadata={
             'hardware': 'NVIDIA L40S',
-            'device': 'cuda:0', 
+            'device': 'cuda:0',
             'compilation_error': RuntimeError("Error building extension 'max_reduction'")
         },
         runtime=-1.0,
@@ -50,16 +50,16 @@ def test_compiled_fail_feedback():
 
 
 def test_correctness_val_fail_feedback():
-    
+
     sample_exec_result = KernelExecResult(
         compiled=True,
         correctness=False,
         metadata={
-            'hardware': 'NVIDIA L40S', 
-            'device': 'cuda:0', 
-            'max_difference': ['29.875006', '28.969961', '27.741943', '27.972809', '27.862772'], 
-            'avg_difference': ['2.578733', '2.575977', '2.574863', '2.581244', '2.582202'], 
-            'correctness_issue': 'Output mismatch', 
+            'hardware': 'NVIDIA L40S',
+            'device': 'cuda:0',
+            'max_difference': ['29.875006', '28.969961', '27.741943', '27.972809', '27.862772'],
+            'avg_difference': ['2.578733', '2.575977', '2.574863', '2.581244', '2.582202'],
+            'correctness_issue': 'Output mismatch',
             'correctness_trials': '(0 / 5)'
         },
         runtime=-1.0,
@@ -142,7 +142,7 @@ def test_runtime_arg_fail_feedback():
 
 def test_empty_feedback():
     """
-     Log Path: /matx/u/simonguo/kernel_multi_turn/level2_reflection_all_prev_deepseek/run_deepseek_turns_3/problem_24/sample_0/log.json 
+     Log Path: /matx/u/simonguo/kernel_multi_turn/level2_reflection_all_prev_deepseek/run_deepseek_turns_3/problem_24/sample_0/log.json
     """
 
     sample_exec_result = KernelExecResult(

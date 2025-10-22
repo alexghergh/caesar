@@ -11,20 +11,20 @@ from pydra import Config
 
 from states import WorkArgs
 from utils import ensure_json_serializable
-from KernelBenchInternal.src import eval as kernel_eval
+from KernelBenchInternal import eval as kernel_eval
 
 class CaesarLogger:
     def __init__(
-            self, 
-            log_dir: str, 
+            self,
+            log_dir: str,
             config: Config,
             work: WorkArgs,
-            verbose: bool = False, 
+            verbose: bool = False,
             log_name="log.json"
         ):
         """
         Initialize the logger with a directory to save logs.
-        
+
         Args:
             log_dir: Directory path where logs will be saved
         """
@@ -33,7 +33,7 @@ class CaesarLogger:
         self.log_file = self.log_dir / log_name
         self.verbose = verbose
         self.turn = 1
-        
+
         self.current_log = {}
 
         self.setup_logging_dir(config.to_dict())
@@ -62,7 +62,7 @@ class CaesarLogger:
         self.turn = turn
         self.current_log[self.turn] = {}
         self._save_log()
-    
+
     def clean_log(self) -> None:
         """
         Hacky: Only call when finished!
@@ -79,7 +79,7 @@ class CaesarLogger:
             self.current_log[self.turn][key] = content
         # self._save_log()
 
-    def log_turn(self, 
+    def log_turn(self,
                 turn: int,
                 context: Optional[str] = None,
                 model_response: Optional[str] = None,
@@ -91,7 +91,7 @@ class CaesarLogger:
         ) -> None:
         """
         Log the data for a specific turn.
-        
+
         Args:
             turn: Turn number to log
             context: Optional context string for this turn
@@ -123,7 +123,7 @@ class CaesarLogger:
             self.current_log[turn]["eval_result"] = eval_result
         if profiler_result is not None:
             self.current_log[turn]["profiler_result"] = profiler_result
-            
+
         if self.verbose:
             print(f"Saved turn {turn} info to {self.log_file}")
 
@@ -151,25 +151,25 @@ class CaesarLogger:
                         self.current_log[turn] = self.exec_log_to_obj(self.current_log[turn])
 
                 self.turn = max(numeric_turns) if numeric_turns else 1
-    
+
     def exec_log_to_obj(self, saved_dict: dict | str) -> kernel_eval.KernelExecResult | None:
         if isinstance(saved_dict, kernel_eval.KernelExecResult):
             return saved_dict
 
-        if saved_dict == "": 
+        if saved_dict == "":
             # return None
             # SHOULD NOT HAPPEN
             raise ValueError("[Logger] exec_log_to_obj: saved_dict is empty, should not happen")
-        
+
         kernel_eval_result = kernel_eval.KernelExecResult(
             compiled=saved_dict.get("compiled", None),
             correctness=saved_dict.get("correctness", None),
             metadata=saved_dict.get("metadata", {}),
             runtime=saved_dict.get("runtime", -1.0),
             runtime_stats=saved_dict.get("runtime_stats", {})
-        )        
+        )
         return kernel_eval_result
-    
+
 
     def _save_timeout_eval(self, msg: str) -> None:
         """
@@ -190,10 +190,10 @@ class CaesarLogger:
     def get_turn_data(self, turn: int) -> Dict[str, str]:
         """
         Get the logged data for a specific turn.
-        
+
         Args:
             turn: Turn number to retrieve
-            
+
         Returns:
             Dictionary containing the turn's logged data
         """
