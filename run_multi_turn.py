@@ -81,7 +81,7 @@ class CaesarRunConfig(Config):
         self.server_address = None
         self.server_port = None
 
-        # Eval Speciifc
+        # Eval Specific
         self.num_correct_trials = 5
         self.num_perf_trials = 100
         self.timeout = 600 # time out per round, set to 10 min
@@ -102,13 +102,11 @@ class CaesarRunConfig(Config):
 
 
         # Logging
-        self.log_dir_prefix = "/matx/u/simonguo/kernel_multi_turn/"
-        self.build_dir_prefix = "/matx/u/simonguo/kernel_eval_build/"
-        self.gpu_arch = ["Ada"]  # build for L40s Ada Lovelace architecture
+        self.log_dir_prefix = "/home/8/uc05358/kernel-eval/caesar_log_dir/"
+        self.build_dir_prefix = "/home/8/uc05358/kernel-eval/caesar_build_dir/"
+        self.gpu_arch = ["Hopper"]  # build for H100 architecture
 
         self.mock = True
-        # testing only 1 sample
-        # self.testing = False
         self.debug = False
 
     def deepseek(self):
@@ -406,6 +404,6 @@ def main_orchestrator(config: CaesarRunConfig):
 
 
 if __name__ == "__main__":
-    main_orchestrator()
-    # main()
+    # main_orchestrator()
+    main()
 
