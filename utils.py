@@ -15,9 +15,9 @@ REPO_TOP_PATH = os.path.abspath(
         "..",
     )
 )
-KERNEL_BENCH_REPO_PATH = os.path.join(REPO_TOP_PATH, "KernelBenchInternal")
 
-KERNEL_BENCH_PATH = os.path.join(REPO_TOP_PATH, "KernelBenchInternal", "KernelBench")
+KERNEL_BENCH_PATH = os.path.join(REPO_TOP_PATH, "KernelBench", "KernelBench")
+KERNEL_BENCH_ARCH_EXAMPLES_PATH = os.path.join(REPO_TOP_PATH, "KernelBench", "KernelBenchInternal", "prompts")
 
 
 # These are from KernelBenchInternal/src/prompt_constructor.py
@@ -39,10 +39,10 @@ REFLECTION_INSTRUCTION_LAST_ONLY = """Given your latest generation, improve and 
 def prompt_generate_initial_from_template(ref_arch_src: str):
     example_ind = 1
     example_arch_path = os.path.join(
-        KERNEL_BENCH_REPO_PATH, f"src/prompts/model_ex_{example_ind}.py"
+        KERNEL_BENCH_ARCH_EXAMPLES_PATH, f"model_ex_{example_ind}.py"
     )
     example_new_arch_path = os.path.join(
-        KERNEL_BENCH_REPO_PATH, f"src/prompts/model_new_ex_{example_ind}.py"
+        KERNEL_BENCH_ARCH_EXAMPLES_PATH, f"model_new_ex_{example_ind}.py"
     )
     example_arch = read_file(example_arch_path)
     example_new_arch = read_file(example_new_arch_path)
