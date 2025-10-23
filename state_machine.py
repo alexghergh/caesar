@@ -1,8 +1,3 @@
-"""
-State Machine
-
-
-"""
 import json
 import time
 import random
@@ -24,6 +19,7 @@ from states import CaesarState, StateOutcome, WorkArgs
 from logger import CaesarLogger
 from utils import build_context_multi_turn, prompt_generate_initial_from_template, timeout
 from orchestrator import GPUOrchestrator
+
 from KernelBenchInternal import eval as kernel_eval
 from KernelBenchInternal.eval import build_compile_cache_with_capturing
 from KernelBenchInternal.utils import (
@@ -43,7 +39,7 @@ def show_current_state(round: int, state: CaesarState, show_state: bool):
 class CaesarStateMachine:
     def __init__(
         self,
-        transition_cfg: dict,
+        transition_cfg: dict[StateOutcome, CaesarState],
         config: Config,
         work: WorkArgs,
         logger: CaesarLogger,
@@ -65,7 +61,7 @@ class CaesarStateMachine:
         self.problem_id = work.problem_id
         self.sample_id = work.sample_id
         self.problem = work.problem
-        self.state_machine_strategy = config.state_machine_strategy
+        # self.state_machine_strategy = config.state_machine_strategy
 
         self.ref_arch_src = ""  # problem in plain text
 
@@ -90,13 +86,20 @@ class CaesarStateMachine:
         # Add logger initialization
 
         # this is problem / sample specific
-        self.log_dir = os.path.join(config.log_dir_prefix, config.run_group, config.run_name, "problem_" + str(work.problem_id), "sample_" + str(work.sample_id))
+        self.log_dir = os.path.join(
+            config.log_dir_prefix,
+            config.run_group,
+            config.run_name,
+            "problem_" + str(work.problem_id),
+            "sample_" + str(work.sample_id),
+        )
         self.logger = logger # CaesarLogger(self.log_dir, config, work, verbose=config.verbose, log_name=f"log.json")
 
         # Check if run is already finished
         if os.path.exists(os.path.join(self.log_dir, "DONE")):
             print(f"[SKIP] Run {self.run_name} {self.problem_id} {self.sample_id} already finished... skipping")
             return
+
         # Check if previous run exists
         elif os.path.exists(os.path.join(self.log_dir, "log.json")):
             print(f"[RECOVER] Run was not finished, loading existing partial results from {self.log_dir}")
@@ -121,7 +124,7 @@ class CaesarStateMachine:
         print(saved_log.keys())
 
         # Load turn data
-        for turn in range(1, self.max_k+1, 1):
+        for turn in range(1, self.max_k + 1, 1):
             turn_str = str(turn)
 
             # The first turn that is not recorded in the log
@@ -142,7 +145,11 @@ class CaesarStateMachine:
             self.profiler_result[turn] = turn_data.get("profiler_result", "")
 
             # If these are empty, this run was corrupted somehow.
-            if self.context[turn] == "" or self.model_response[turn] == "" or (self.kernel_code[turn] == "" and self.feedback_code[turn] == ""):
+            if (
+                self.context[turn] == ""
+                or self.model_response[turn] == ""
+                or (self.kernel_code[turn] == "" and self.feedback[turn] == "")
+            ):
                 self.current_k = turn - 1
                 break
 
@@ -164,7 +171,6 @@ class CaesarStateMachine:
                 print(f"[RECOVER] loaded in data from iteration {turn}")
 
         print(f"[RECOVER] Resuming from round {self.current_k}")
-
 
     def pre_run(self):
         """
@@ -188,7 +194,6 @@ class CaesarStateMachine:
             "sample_" + str(self.sample_id),
         )
 
-
     def run(self) -> int:
         """
         Main state machine event loop.
@@ -199,6 +204,7 @@ class CaesarStateMachine:
             print(f"[SKIP] Run {self.run_name} {self.problem_id} {self.sample_id} already finished... skipping")
             return
 
+        breakpoint()
         while self.current_k <= self.max_k:
             match self.state:
                 case CaesarState.START_STATE:
@@ -298,7 +304,6 @@ class CaesarStateMachine:
         show_current_state(self.current_k, self.state, self.config.show_state)
 
         self.outcome = StateOutcome.Start
-        # import pdb; pdb.set_trace()
 
     def generate_logic(self):
         """
@@ -339,7 +344,7 @@ class CaesarStateMachine:
 
             # For handling timeouts, now save
             self.logger.log_on_turn("model_response", model_response)
-            self.logger.log_on_turn("kernel_code", self.kernel_code[self.current_k])
+            self.logger.log_on_turn("kernel_code", kernel_code)
 
         # Update global state info
         self.outcome = StateOutcome.Generate
@@ -380,11 +385,12 @@ class CaesarStateMachine:
             self.eval_result[self.current_k] = kernel_eval.KernelExecResult(
                 compiled=False,
                 correctness=False,
-                metadata={"compiler_error": compiler_feedback,
-                          "hardware": "cpu",
-                          "device": "cpu"
-                        }
-                )
+                metadata={
+                    "compiler_error": compiler_feedback,
+                    "hardware": "cpu",
+                    "device": "cpu"
+                }
+            )
 
         if self.config.mock:
             compiler_feedback = f"Mock compilation happened. Returning {self.outcome}"

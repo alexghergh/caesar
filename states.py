@@ -3,27 +3,29 @@ from typing import Dict
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 
+
 @dataclass
 class WorkArgs:
     """What the state machine is going to run"""
     problem: str
     problem_id: str
     sample_id: int
-    
+
 
 class CaesarState(Enum):
     """State machine states"""
     START_STATE = "start"
-    GENERATE_STATE = "generate" 
-    COMPILE_STATE = "compile" 
+    GENERATE_STATE = "generate"
+    COMPILE_STATE = "compile"
     CORRECT_STATE = "correct"
     PERFORMANCE_STATE = "performance"
-    FINISH_CHECK_STATE = "finish_check"
+    # FINISH_CHECK_STATE = "finish_check"
     FINISH_STATE = "finish"
+
 
 class StateOutcome(Enum):
     # These outcomes are specific to ONE state
-    """Possible outcomes at a state"""
+    """Possible outcomes for a state"""
     # Outcomes for START_STATE
     Start = "start"
 
@@ -38,7 +40,7 @@ class StateOutcome(Enum):
     GPUCompileFail = "gpu_compile_fail"
     GPUCompileSuccess_CheckFail = "gpu_compile_success_check_fail"
     GPUCompileSuccess_CheckSuccess = "gpu_compile_success_check_success"
-    
+
     # Outcomes for PERFORMANCE_STATE
     PerformanceSuccess = "performance_success"
     PerformanceFail = "performance_fail"
@@ -46,16 +48,17 @@ class StateOutcome(Enum):
     # FINISH_STATE
     Finish = "finish"
 
+
 class Transition(ABC, Dict[StateOutcome, CaesarState]):
     """
     Abstract base class that maps (current_state, outcome) pairs to next states.
     Subclasses must implement the transitions for all valid state-outcome combinations.
     """
-    
+
     def __init__(self):
         super().__init__()
         self._validate_transitions()
-    
+
     @abstractmethod
     def _define_transitions(self) -> Dict[StateOutcome, CaesarState]:
         """
@@ -63,7 +66,7 @@ class Transition(ABC, Dict[StateOutcome, CaesarState]):
         Must be implemented by subclasses.
         """
         pass
-    
+
     def _validate_transitions(self) -> None:
         """
         Ensures all valid state-outcome combinations have a defined transition
@@ -74,9 +77,8 @@ class Transition(ABC, Dict[StateOutcome, CaesarState]):
         transitions = self._define_transitions()
 
         # check all the outcomes are defined
-        for outcome in StateOutcome:
-            if outcome not in transitions:
-                raise ValueError(f"Mapping for Outcome {outcome} is not defined")
+        # for outcome in StateOutcome:
+        #     if outcome not in transitions:
+        #         raise ValueError(f"Mapping for Outcome {outcome} is not defined")
 
         self.update(transitions) # updates the dict
-        

@@ -111,13 +111,9 @@ def build_context_multi_turn(
                                                             )
         return prompt
 
-
-
-
     # Reflection
     # Iterations are 1-indexed.
     for i in range(1, iteration, 1):
-
 
         # Add what you generated
         if "reflection" in strategy:
@@ -162,10 +158,8 @@ def build_context_multi_turn(
 
     return prompt
 
-
 EVAL_RESULT_INSTRUCTION_LAST_ONLY = """Name your new improved output architecture ModelNew. Output the new code in codeblocks. Please generate real code, NOT pseudocode, make sure the code compiles and is fully functional. Just output the new model code, no other text, and NO testing code! \n
 """
-
 
 def construct_programatic_prompt_feedback(compiler_feedback: str,
                                           exec_result: KernelExecResult,
@@ -249,8 +243,6 @@ def construct_programatic_prompt_feedback(compiler_feedback: str,
     return None
 
 
-
-
 def ensure_json_serializable(obj):
     """
     Recursively convert any object into a JSON serializable format.
@@ -283,6 +275,7 @@ def check_result_exists(log_dir_prefix: str, run_group: str, run_name: str, prob
     # print(f"Checking if {path}: {os.path.exists(path)}") # DEBUG
 
     return os.path.exists(path)
+
 
 def check_result_exists_run_path(run_path: str, problem_id: int, sample_id: int) -> bool:
     """
@@ -317,6 +310,7 @@ def get_run_group_stats(log_dir_prefix: str, run_group: str) -> dict:
         run_group_stats[run_name] = num_evaluated
 
     return run_group_stats
+
 
 class timeout:
     def __init__(self, seconds):
