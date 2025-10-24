@@ -1,388 +1,309 @@
-import json
 import time
-import random
-from typing import Optional
-from pydra import Config
-from enum import Enum
-import copy
 import os
+import copy
+
 import torch
-import signal
+
+from KernelBenchInternal import eval as kernel_eval
+from KernelBenchInternal.utils import (
+    extract_last_code,
+    query_server,
+    read_file,
+)
 
 from eval import (
     compile_single_sample,
     evaluate_single_sample_src,
-    get_kernel_hash,
     get_torch_profiler_info
 )
-from states import CaesarState, StateOutcome, WorkArgs
+from states import CaesarState, StateOutcome
+from work import WorkArgs
 from logger import CaesarLogger
-from utils import build_context_multi_turn, prompt_generate_initial_from_template, timeout
-from orchestrator import GPUOrchestrator
-
-from KernelBenchInternal import eval as kernel_eval
-from KernelBenchInternal.eval import build_compile_cache_with_capturing
-from KernelBenchInternal.utils import (
-    extract_last_code,
-    query_server,
-    extract_first_code,
-    extract_code_blocks,
-    read_file,
+from utils import (
+    build_context_multi_turn,
+    prompt_generate_initial_from_template,
 )
-
-
-def show_current_state(round: int, state: CaesarState, show_state: bool):
-    if show_state:
-        print(f"[StateMachine] I am in round {round} state: {state}")
+from orchestrator import GPUOrchestrator
+from transition import Transition
+from caesar_config import CaesarRunConfig
+from turn_info import LLMTurnInfo
 
 
 class CaesarStateMachine:
     def __init__(
         self,
-        transition_cfg: dict[StateOutcome, CaesarState],
-        config: Config,
+        transitions: Transition,
+        config: CaesarRunConfig,
         work: WorkArgs,
         logger: CaesarLogger,
-        process_id: Optional[int] = None,
-        orchestrator: Optional[GPUOrchestrator] = None,
-        max_gpu_retries: int = 3,
+        process_id: int,
+        orchestrator: GPUOrchestrator,
     ):
-        self.state = CaesarState.START_STATE
-        self.outcome = StateOutcome.Start
-
-        self.current_k = 0
-        self.max_k = config.max_k  # TODO: is an a arg
-        self.transition_cfg = transition_cfg
+        self.transitions = transitions
         self.config = config
+        self.work = work
 
-        # KernelBench
-        self.run_name = config.run_name
-        self.run_group = config.run_group
-        self.problem_id = work.problem_id
-        self.sample_id = work.sample_id
-        self.problem = work.problem
-        # self.state_machine_strategy = config.state_machine_strategy
+        self.state = CaesarState.START_STATE
 
-        self.ref_arch_src = ""  # problem in plain text
+        self.current_k = 1
+        self.max_k = config.max_k
 
-        # LLM state information
-        self.curr_context: str = ""
+        # contains the reference problem in Python code as a string
+        # load it from KernelBench repo
+        self.ref_problem_src = read_file(self.work.problem_path)
 
-        self.context: dict[int, str] = {}
-        self.model_response: dict[int, str] = {}
-        self.kernel_code: dict[int, str] = {}
-        self.eval_result: dict[int, str] = {}
-        self.profiler_result: dict[int, str] = {}
-
-        # external feedback
-        self.feedback: dict[int, str] = {}
-
-        # Timeout stuff
-        self.correct_state_timeout = config.timeout
-        self.compile_state_timeout = config.timeout
-        self.max_gpu_retries = max_gpu_retries
-        self.gpu_retry_count = 0
-
-        # Add logger initialization
-
-        # this is problem / sample specific
-        self.log_dir = os.path.join(
-            config.log_dir_prefix,
-            config.run_group,
-            config.run_name,
-            "problem_" + str(work.problem_id),
-            "sample_" + str(work.sample_id),
+        # build dir to cache compiled problems
+        self.build_dir = os.path.join(
+            self.config.build_dir_prefix,
+            self.config.run_group,
+            self.config.run_name,
+            self.work.get_log_path(),
         )
-        self.logger = logger # CaesarLogger(self.log_dir, config, work, verbose=config.verbose, log_name=f"log.json")
 
-        # Check if run is already finished
-        if os.path.exists(os.path.join(self.log_dir, "DONE")):
-            print(f"[SKIP] Run {self.run_name} {self.problem_id} {self.sample_id} already finished... skipping")
+        self.logger = logger
+
+        # LLM state information (all turns)
+        self.curr_context: str = "" # current context (built out of all the info from llm_info)
+        self.llm_info = LLMTurnInfo()
+
+        # timeout stuff
+        self.compilation_timeout = config.timeout
+        self.correctness_check_timeout = config.timeout
+
+        # check if run is already finished
+        if os.path.exists(os.path.join(self.logger.log_dir, "DONE")):
+            print(
+                f"[SKIP] Run {self.config.run_name}, problem id {self.work.problem_id}, sample {self.work.sample_id} already finished... skipping"
+            )
+            self.finished = True
             return
 
-        # Check if previous run exists
-        elif os.path.exists(os.path.join(self.log_dir, "log.json")):
-            print(f"[RECOVER] Run was not finished, loading existing partial results from {self.log_dir}")
+        # check if previous run exists
+        elif os.path.exists(self.logger.log_file):
+            print(
+                f"[RECOVER {self.work.problem_id}/{self.work.sample_id}] "
+                "Run was not finished, loading existing partial results from {self.logger.log_file}"
+            )
             self.load_from_previous_run()
 
-        # Set up orchestrator and MP
+        self.finished = False
+
+        # set up orchestrator
         self.process_id = process_id
         self.orchestrator = orchestrator
 
-        self.show_state = config.show_state
-
-        # Set up KernelBench as context, problem prompts etc.
-        self.pre_run()
-
     def load_from_previous_run(self):
         """
-        Load previous information from a prior run if it exists in self.log_dir.
+        Load previous information from a prior run if it exists in the log dir.
         """
-        log_file = os.path.join(self.log_dir, "log.json")
-        with open(log_file, 'r') as f:
-            saved_log = json.load(f)
-        print(saved_log.keys())
+        self.logger.load_log()
+        saved_log = copy.deepcopy(self.logger.current_log)
 
-        # Load turn data
-        for turn in range(1, self.max_k + 1, 1):
-            turn_str = str(turn)
+        # clean the log at this point
+        # in case the run finished abruptly, we need to rebuild log
+        self.logger.clean_log()
 
-            # The first turn that is not recorded in the log
-            # Assumption: if it is saved in the file, it is finished
+        if self.config.verbose:
+            print(
+                f"[RECOVER {self.work.problem_id}/{self.work.sample_id}] "
+                    "Recoreved log data from previous run: ",
+                saved_log.keys(),
+            )
+
+        # check turn data
+        for turn in range(1, self.max_k + 2):
+
+            # check if this is the first turn that is not recorded in the log
             self.current_k = turn
-            if turn_str not in saved_log:
-                self.current_k = turn - 1
+            if turn not in saved_log:
+                # start from this turn
                 break
 
             # current turn
-            turn_data = saved_log[turn_str]
+            turn_data = saved_log[turn]
 
-            self.context[turn] = turn_data.get("context", "")
-            self.model_response[turn] = turn_data.get("model_response", "")
-            self.kernel_code[turn] = turn_data.get("kernel_code", "")
-            self.feedback[turn] = turn_data.get("feedback", "")
-            self.eval_result[turn] = turn_data.get("eval_result", "")
-            self.profiler_result[turn] = turn_data.get("profiler_result", "")
+            self.llm_info.update_turn_data(turn, {
+                "prompt": turn_data.get("prompt", ""),
+                "model_response": turn_data.get("model_response", ""),
+                "kernel_code": turn_data.get("kernel_code", ""),
+                "feedback": turn_data.get("feedback", ""),
+                "eval_result": turn_data.get("eval_result", {}),
+                "profiler_result": turn_data.get("profiler_result", ""),
+            })
 
-            # If these are empty, this run was corrupted somehow.
+            # if these are empty, this turn was corrupted somehow
+            # re-do this turn
             if (
-                self.context[turn] == ""
-                or self.model_response[turn] == ""
-                or (self.kernel_code[turn] == "" and self.feedback[turn] == "")
+                self.llm_info.prompt[turn] == ""
+                or self.llm_info.model_response[turn] == ""
+                or (self.llm_info.kernel_code[turn] == "" and self.llm_info.feedback[turn] == "")
             ):
-                self.current_k = turn - 1
+                self.current_k = turn
                 break
 
-            # In an actually valid run, convert str to EvalResult
-            self.eval_result[turn] = self.logger.exec_log_to_obj(self.eval_result[turn])
+            # otherwise, rebuild turn log data
+            self.logger.update_turn(turn=turn, llm_info=self.llm_info)
 
-            self.logger.log_turn(
-                turn=turn,
-                context=self.context[turn],
-                model_response=self.model_response[turn],
-                kernel_code=self.kernel_code[turn],
-                feedback=self.feedback[turn],
-                eval_result=self.eval_result[turn],
-                profiler_result=self.profiler_result[turn],
-                last=False
+        # at the end of recovery, save log
+        # if nothing was wrong, then the same info is dumped; if something was
+        # wrong at some round, then we write to discard any later data
+        self.logger.save_log()
+
+        # special case: everything is finished, but the DONE file is not written
+        # for whatever reason; passthrough to the end
+        if self.current_k == self.max_k + 1:
+            self.current_k -= 1
+            self.state = CaesarState.FINISH_STATE
+
+
+        if self.config.verbose:
+            print(
+                f"[RECOVER {self.work.problem_id}/{self.work.sample_id}] "
+                "Resuming from round {self.current_k}"
             )
 
-            if self.config.verbose:
-                print(f"[RECOVER] loaded in data from iteration {turn}")
 
-        print(f"[RECOVER] Resuming from round {self.current_k}")
-
-    def pre_run(self):
-        """
-        Set up code before starting the state machine.
-        """
-        if not os.path.exists(self.config.log_dir_prefix):
-            os.makedirs(self.config.log_dir_prefix, exist_ok=True)
-
-        # assume each problem is a path
-        problem_path_prefix = "../"  # to KernelBench directory
-        problem_path = os.path.join(problem_path_prefix, self.problem)
-        self.ref_arch_src = read_file(problem_path)
-
-        self.initial_prompt = prompt_generate_initial_from_template(self.ref_arch_src)
-
-        self.build_dir = os.path.join(
-            self.config.build_dir_prefix,
-            self.run_group,
-            self.run_name,
-            "problem_" + str(self.problem_id),
-            "sample_" + str(self.sample_id),
-        )
-
-    def run(self) -> int:
+    def run(self) -> None:
         """
         Main state machine event loop.
         """
 
-        # Check if run is already finished
-        if os.path.exists(os.path.join(self.log_dir, "DONE")):
-            print(f"[SKIP] Run {self.run_name} {self.problem_id} {self.sample_id} already finished... skipping")
+        # check if DONE file written
+        if self.finished:
             return
 
-        breakpoint()
         while self.current_k <= self.max_k:
+
+            if self.config.show_state:
+                print(
+                    f"[STATEMACHINE {self.work.problem_id}/{self.work.sample_id}] "
+                    "Round {self.current_k}, entering state: {self.state}"
+                )
+
             match self.state:
                 case CaesarState.START_STATE:
-                    self.start_logic()
+                    self.start_turn_logic()
                 case CaesarState.GENERATE_STATE:
                     self.generate_logic()
                 case CaesarState.COMPILE_STATE:
                     self.compile_logic()
-                case CaesarState.CORRECT_STATE:
-                    self.correct_logic()
+                case CaesarState.CORRECTNESS_STATE:
+                    self.correctness_check_logic()
                 case CaesarState.PERFORMANCE_STATE:
                     self.performance_logic()
                 case CaesarState.FINISH_STATE:
-                    """Special case where we finish early. Usually for errors."""
-                    self.finish_logic()
-
-                    # It returned with a failure.
-                    return 1
+                    self.finish_turn_logic()
 
                 case _:
                     raise ValueError(f"Invalid state to be in: {self.state}")
 
-            self.state = self.transition()
+            # transition to next state
+            # (current_state, outcome) -> next_state
+            self.state = self.transitions[self.outcome]
 
-        self.state = CaesarState.FINISH_STATE
-        self.finish_logic()
 
-        # Edge case with empty dict. Hacky, but works.
-        self.logger.clean_log()
-
-        # It returned correctly.
-        return 0
-
-    def transition(self):
+    def start_turn_logic(self):
         """
-        Based on transition config, move from current
-        state to next state in StateMachine.
-        returns the next state to be in
+        Logic for the start state of each turn. If we didn't yet reach the
+        maximum number of turns allowed, keep looping.
         """
 
-        # we are at a curr state and with a partiuclar outcome
-        # now we go transition (curr_state, outcome) -> next_state
-        # outcome_to_state
-        outcome_to_state: dict[StateOutcome, CaesarState] = self.transition_cfg
-        return outcome_to_state[self.outcome]
+        # initial round prompt
+        # TODO replace this with an enum easily accessible through configs
+        # the enum is simply INIT_PROMPT_STRATEGY: function_name,
+        # then later access through init_prompt_strategy(ref_problem)
+        self.initial_prompt = prompt_generate_initial_from_template(self.ref_problem_src)
 
-        # state , possible outcomes
-        # (state, particular outcome) [logic] -> next state
-
-        # What are the transitions from outcome to next state
-        # 1:1 mapping
-
-    # Logic for each state
-    def start_logic(self):
-        """
-        Logic for the start state.
-        Increment the round number.
-        """
-        # If we're moving to a new turn, log the previous turn's data
-        if self.current_k > 0 and self.current_k <= self.max_k:
-            # this is logging the previous round's data
-            self.logger.log_turn(
-                self.current_k,
-                self.context.get(self.current_k, ""),
-                self.model_response.get(self.current_k, ""),
-                self.kernel_code.get(self.current_k, ""),
-                self.feedback.get(self.current_k, ""),
-                self.eval_result.get(self.current_k, ""),
-                self.profiler_result.get(self.current_k, ""),
-            )
-
-            # copy the context from the previous round
-            # self.context[self.current_k] = copy.deepcopy(self.context[self.current_k - 1])
-
-            # problem , g1, g2, gi-1
-            # Update current context even more.
-
-        # Increase the round number
-        self.current_k += 1
-        self.logger.update_turn(self.current_k)
-
-        # Update current context
+        # TODO prompt
+        # update current context
         self.curr_context = build_context_multi_turn(
             initial_prompt=self.initial_prompt,
-            contexts=self.context,
-            kernels=self.kernel_code,
-            compiler_feedback=self.feedback,
-            eval_result=self.eval_result,
-            profiler_result=self.profiler_result,
+            prompts=self.llm_info.prompt,
+            kernels=self.llm_info.kernel_code,
+            compiler_feedback=self.llm_info.feedback,
+            eval_result=self.llm_info.eval_result,
+            profiler_result=self.llm_info.profiler_result,
             iteration=self.current_k,
-            strategy=self.config.context_strategy,
+            strategy=["reflection"], #self.config.context_strategy,
             use_last_only=self.config.use_last_only,
-            max_feedback_length=self.config.max_feedback_length,
+            max_feedback_length=2000, # TODO this is in characters; how big can traces actually get? #self.config.max_feedback_length,
         )
-        self.context[self.current_k] = self.curr_context
-
-        show_current_state(self.current_k, self.state, self.config.show_state)
+        self.llm_info.prompt[self.current_k] = self.curr_context
 
         self.outcome = StateOutcome.Start
 
     def generate_logic(self):
         """
-        Logic for the generate state.
-        Query LLM given context and generate kernel.
+        Logic for the generation state. Query LLM given context and generate
+        kernel.
         """
-        show_current_state(self.current_k, self.state, self.config.show_state)
+        # query LLM
+        model_response = query_server(
+            self.curr_context,
+            model_name=self.config.model_name,
+            temperature=(
+                0.0 if self.config.greedy_sample else self.config.temperature
+            ),
+            top_p=self.config.top_p,
+            top_k=self.config.top_k,
+            max_tokens=self.config.max_tokens, # for? also should be max_tokens - prompt
+            num_completions=self.config.num_completions, # for?
+            server_port=self.config.server_port,
+            server_address=self.config.server_address,
+            server_type=self.config.server_type,
+        )
+        self.llm_info.model_response[self.current_k] = model_response
 
-        if self.config.mock:
-            model_response = "Some dummy response."
-            self.model_response[self.current_k] = model_response
-            self.kernel_code[self.current_k] = "print('EXAMPLE KERNEL')"
+        kernel_code = extract_last_code(model_response, ["python", "cpp"])
 
-        else:  # actual querying API
-            model_response = query_server(
-                self.curr_context,
-                temperature=(
-                    0.0 if self.config.greedy_sample else self.config.temperature
-                ),
-                top_p=self.config.top_p,
-                top_k=self.config.top_k,
-                max_tokens=self.config.max_tokens,
-                num_completions=self.config.num_completions,
-                server_port=self.config.server_port,
-                server_address=self.config.server_address,
-                server_type=self.config.server_type,
-                model_name=self.config.model_name,
-            )
-            self.model_response[self.current_k] = model_response
-            kernel_code = extract_last_code(
-                model_response, ["python", "cpp"]
-            )
+        # TODO continue rounds, but have another prompt that tells the model it
+        # failed; or simply move to the next round and forget this round
+        # altogether; in this case, careful of "build_context" func
+        assert kernel_code is not None and len(kernel_code) > 0, "[Error] Kernel code is Empty, model generation FAILED"
+        # self.outcome = StateOutcome.GenerateFailed # <- possibly
 
-            assert kernel_code is not None and len(kernel_code) > 0, "[Eroror] Kernel code is Empty, model generation FAILED"
-            # NOTE: should we discard this then?
+        self.llm_info.kernel_code[self.current_k] = kernel_code
 
-            self.kernel_code[self.current_k] = kernel_code
-
-            # For handling timeouts, now save
-            self.logger.log_on_turn("model_response", model_response)
-            self.logger.log_on_turn("kernel_code", kernel_code)
-
-        # Update global state info
         self.outcome = StateOutcome.Generate
-        # TODO: WE WILL ACTUALLY EXTRACT
 
-    def compile_logic(self, finish: bool = False):
+    def compile_logic(self):
         """
-        Logic for the compile state.
+        Logic for the CPU compilation state.
         """
-        # CPU Precompile
-        # it corrects / fails
-        # correct -> keep going
-        # fail -> update context, feedback
 
-        show_current_state(self.current_k, self.state, self.config.show_state)
-
+        # compile kernel and build cache
         returncode, stdout, err = compile_single_sample(
-            kernel_src=self.kernel_code[self.current_k],
+            kernel_src=self.llm_info.kernel_code[self.current_k],
             config=self.config,
             build_dir=self.build_dir,
-            timeout_seconds=self.compile_state_timeout
+            timeout_seconds=self.compilation_timeout
         )
 
         if self.config.verbose:
-            print("Compile returncode", returncode)
-            print("Compile stdout", stdout)
-            print("Compile stderr", err)
+            print(f"[COMPILE {self.work.problem_id}/{self.work.sample_id}] Return code: {returncode}")
+            print(f"[COMPILE {self.work.problem_id}/{self.work.sample_id}] Compile stdout: {stdout}")
+            print(f"[COMPILE {self.work.problem_id}/{self.work.sample_id}] Compile stderr: {err}")
 
         compiler_feedback = None
         if returncode == 0:
-            self.outcome = StateOutcome.CPUCompileSuccess
-            self.feedback[self.current_k] = ""
-        else:
-            self.outcome = StateOutcome.CPUCompileFail
-            compiler_feedback = f"Compilation failed:\nstdout: {stdout}\nstderr: {err}"
-            self.feedback[self.current_k] = compiler_feedback
+            self.llm_info.feedback[self.current_k] = ""
 
-            self.eval_result[self.current_k] = kernel_eval.KernelExecResult(
+            # write partial eval result here, since compilation succeeded
+            # we'll write more later if doing correctness check
+            self.llm_info.eval_result[self.current_k] = kernel_eval.KernelExecResult(
+                compiled=True,
+                metadata={
+                    "hardware": "cpu",
+                    "device": "cpu",
+                }
+            )
+            self.outcome = StateOutcome.CPUCompileSuccess
+        else:
+            compiler_feedback = f"Compilation failed.\nstdout: {stdout}\nstderr: {err}"
+            self.llm_info.feedback[self.current_k] = compiler_feedback
+
+            # register compilation failure as eval result
+            self.llm_info.eval_result[self.current_k] = kernel_eval.KernelExecResult(
                 compiled=False,
                 correctness=False,
                 metadata={
@@ -391,290 +312,178 @@ class CaesarStateMachine:
                     "device": "cpu"
                 }
             )
+            self.outcome = StateOutcome.CPUCompileFail
 
-        if self.config.mock:
-            compiler_feedback = f"Mock compilation happened. Returning {self.outcome}"
-            self.feedback[self.current_k] = compiler_feedback
-
-        if finish:
-            self.outcome = StateOutcome.Finish
-        else:
-            # For handling timeouts, now save
-            self.logger.log_on_turn("feedback", None if not compiler_feedback else compiler_feedback)
-
-    def correct_logic(self, finish: bool = False):
+    def correctness_check_logic(self):
         """
-        Correct the kernel code.
-        Args: finish - if this is the last state correctness test
+        Check kernel code correctness.
         """
-        show_current_state(self.current_k, self.state, self.config.show_state)
+        if self.config.verbose:
+            print(f"[CORRECTNESS {self.work.problem_id}/{self.work.sample_id}] Requesting GPU...")
 
-        if self.orchestrator is not None:
-            print(f"[Worker] Process {self.process_id} requesting GPU...")
-
-            with self.orchestrator.reserve_gpu() as gpu_id:
-                try:
-                    print(f"[Worker] Process {self.process_id} acquired GPU {gpu_id}")
-                    # Put Eval Code Here
-                    device = torch.device(f"cuda:{gpu_id}")
-
-                    if self.config.mock:
-                        # Simulate some GPU computation
-                        work_time = random.uniform(1, 5)
-                        torch.randn(100).to(device)
-                        time.sleep(work_time)
-                        self.outcome = StateOutcome.GPUCompileSuccess_CheckSuccess
-                        self.eval_result[self.current_k] = f"Mock eval ran for {work_time}"
-
-                    else:
-                        start_time = time.time()
-
-                        result = evaluate_single_sample_src(
-                            ref_arch_src=self.ref_arch_src,
-                            kernel_src=self.kernel_code[self.current_k],
-                            configs=self.config,
-                            build_dir=self.build_dir,
-                            timeout_seconds=self.correct_state_timeout,
-                            device=device
-                        )
-                        print(f"[Worker ({self.process_id}) working on problem {self.problem_id} sample {self.sample_id}] Result: ", result)
-
-                        # pseudo code
-                        # if result.correctness:
-                            # we call profiler and record it to some field we have
-
-                        self.eval_result[self.current_k] = result
-                        work_time = time.time() - start_time
-
-                        if result is not None:
-                            if "cuda_error" in result.metadata:
-                                print(f"[Worker] CUDA Error detected, killing process {self.process_id} working on GPU {gpu_id}: Working on Problem {self.problem_id} Sample {self.sample_id}")
-                                self.outcome = StateOutcome.Finish
-                                return
-
-                            if result.compiled:
-                                if result.correctness:
-                                    # Enable PyTorch profiling
-
-                                    if "profiler" in self.config.context_strategy:
-                                        print(
-                                            f"[Worker] Process {self.process_id} using PyTorch profiler to profile on GPU {gpu_id} ({device})"
-                                        )
-                                        profile = get_torch_profiler_info(
-                                            ref_arch_src=self.ref_arch_src,
-                                            kernel_src=self.kernel_code[self.current_k],
-                                            build_dir=self.build_dir,
-                                            device=device,
-                                        )
-                                        print(profile)
-                                        self.profiler_result[self.current_k] = profile
-                                    self.outcome = StateOutcome.GPUCompileSuccess_CheckSuccess
-                                else:
-                                    self.outcome = StateOutcome.GPUCompileSuccess_CheckFail
-                            else:
-                                self.outcome = StateOutcome.GPUCompileFail
-                        else:
-                            self.outcome = StateOutcome.GPUCompileFail
-
-                        print(
-                            f"[Worker] Process {self.process_id} working on GPU {gpu_id} ({device}) for {work_time:.2f} seconds"
-                        )
-                        ###############################
-
-                except TimeoutError:
-                    print(f"[Worker] Process {self.process_id} GPU operation timed out")
-                    self.outcome = StateOutcome.GPUCompileFail
-                    self.eval_result[self.current_k] = kernel_eval.KernelExecResult(
-                        compiled=False,
-                        correctness=False,
-                        metadata={"timeout_error": "GPU timed out.",
-                                "hardware": f"gpu: {gpu_id}",
-                                "device": f"gpu"
-                                }
-                        )
-
-                except Exception as e:
-                    print(f"[Worker] Process {self.process_id} encountered error: {e}")
-
-                finally:
-                    try:
-                        del device
-                    except:
-                        pass
+        with self.orchestrator.reserve_gpu() as gpu_id:
+            try:
+                if self.config.verbose:
                     print(
-                        f"[Worker] Process {self.process_id} released GPU {gpu_id}"
+                        f"[CORRECTNESS {self.work.problem_id}/{self.work.sample_id}] "
+                        "Acquired GPU {gpu_id}"
                     )
 
-        else:
-            print(f"[Single Worker] Process {self.process_id} requesting GPU 0...")
-            device = torch.device(f"cuda:{self.config.dedicated_gpu_id}")
-            print(f"[Single Worker] Acquired device:", device)
-            if self.config.mock:
-                # Simulate some GPU computation
-                work_time = random.uniform(1, 5)
-                torch.randn(100).to(device)
-                time.sleep(work_time)
-                self.eval_result[self.current_k] = f"Mock eval ran for {work_time}"
-                self.outcome = StateOutcome.GPUCompileSuccess_CheckSuccess
-            else:
-                result = evaluate_single_sample_src(
-                    ref_arch_src=self.ref_arch_src,
-                    kernel_src=self.kernel_code[self.current_k],
+                device = torch.device(f"cuda:{gpu_id}")
+                start_time = time.time()
+
+                # TODO look into this more
+                result: kernel_eval.KernelExecResult = evaluate_single_sample_src(
+                    ref_arch_src=self.ref_problem_src,
+                    kernel_src=self.llm_info.kernel_code[self.current_k],
                     configs=self.config,
                     build_dir=self.build_dir,
+                    timeout_seconds=self.correctness_check_timeout,
                     device=device
                 )
-                self.eval_result[self.current_k] = result
+
+                if self.config.verbose:
+                    print(
+                        f"[CORRECTNESS {self.work.problem_id}/{self.work.sample_id}] Result: ",
+                        result,
+                    )
+
+                work_time = time.time() - start_time
+
+                # record result (fields should be correctly set)
+                self.llm_info.eval_result[self.current_k] = result
 
                 if result is not None:
-                    if result.compiled:
-                        if result.correctness:
-                            if "profiler" in self.config.context_strategy:
-                                profile = get_torch_profiler_info(
-                                    ref_arch_src=self.ref_arch_src,
-                                    kernel_src=self.kernel_code[self.current_k],
-                                    build_dir=self.build_dir,
-                                    device=device,
-                                )
-                                self.profiler_result[self.current_k] = profile
-                            self.outcome = StateOutcome.GPUCompileSuccess_CheckSuccess
-                        else:
-                            self.outcome = StateOutcome.GPUCompileSuccess_CheckFail
+                    if "cuda_error" in result.metadata:  # TODO only cuda error?
+                        print(
+                            f"[CORRECTNESS {self.work.problem_id}/{self.work.sample_id}] "
+                            "CUDA Error detected"
+                        )
+                        self.outcome = StateOutcome.GPUCorrectnessFail
+                        return
+
+                    # if compiled and is correct
+                    if result.compiled and result.correctness:
+                        self.outcome = StateOutcome.GPUCorrectnessSuccess
                     else:
-                        self.outcome = StateOutcome.GPUCompileFail
+                        self.outcome = StateOutcome.GPUCorrectnessFail
                 else:
-                    self.outcome = StateOutcome.GPUCompileFail
-                work_time = time.time() - start_time
-            print(
-                f"[Single Worker] Process working on GPU 0 for {work_time:.2f} seconds"
-            )
-            print(f"[Single Worker] Releasing GPU 0...")
+                    self.outcome = StateOutcome.GPUCorrectnessFail
 
+                if self.config.verbose:
+                    print(
+                        f"[CORRECTNESS {self.work.problem_id}/{self.work.sample_id}] "
+                        f"Working on GPU {gpu_id} ({device}) for {work_time:.2f} seconds"
+                    )
 
-        if finish:
-            self.outcome = StateOutcome.Finish
-        else:
-            # For handling timeouts, now save
-            self.logger.log_on_turn("eval_result", self.eval_result[self.current_k])
+            except TimeoutError:  # TODO this never reaches, does it?
+                print(
+                    f"[CORRECTNESS {self.work.problem_id}/{self.work.sample_id}] "
+                    f"Working on GPU {gpu_id} operation timed out"
+                )
+                self.outcome = StateOutcome.GPUCorrectnessFail
+                self.llm_info.eval_result[self.current_k] = kernel_eval.KernelExecResult(
+                    compiled=False,
+                    correctness=False,
+                    metadata={
+                        "timeout_error": "GPU timed out.",
+                        "hardware": "gpu",
+                        "device": f"cuda:{gpu_id}"
+                    }
+                )
+
+            except Exception as e:
+                print(
+                    f"[CORRECTNESS {self.work.problem_id}/{self.work.sample_id}] "
+                    f"Working on GPU {gpu_id} encountered error: {e}"
+                )
+
+            finally:
+                try:
+                    del device
+                except:
+                    pass
+
+                if self.config.verbose:
+                    print(
+                        f"[CORRECTNESS {self.work.problem_id}/{self.work.sample_id}] "
+                        f"Released GPU {gpu_id}"
+                    )
 
     def performance_logic(self):
         """
         Logic for the performance state. This is for profiling code.
         """
-        show_current_state(self.current_k, self.state, self.config.show_state)
 
+        if self.config.verbose:
+            print(f"[PERF {self.work.problem_id}/{self.work.sample_id}] Requesting GPU...")
 
-        if self.orchestrator is not None:
-            print(f"[Worker] Process {self.process_id} requesting GPU...")
+        with self.orchestrator.reserve_gpu() as gpu_id:
+            try:
+                print(f"[PERF {self.work.problem_id}/{self.work.sample_id}] Acquired GPU {gpu_id}")
 
-            with self.orchestrator.reserve_gpu() as gpu_id:
-                try:
-                    print(f"[Worker] Process {self.process_id} acquired GPU {gpu_id}")
-                    # Put Eval Code Here
-                    device = torch.device(f"cuda:{gpu_id}")
+                device = torch.device(f"cuda:{gpu_id}")
+                start_time = time.time()
 
-                    if self.config.mock:
-                        return
-                    else:
-                        start_time = time.time()
-
-                        result = get_torch_profiler_info(
-                            ref_arch_src=self.ref_arch_src,
-                            kernel_src=self.kernel_code[self.current_k],
-                            build_dir=self.build_dir,
-                            device=device,
-                        )
-                        self.profiler_result[self.current_k] = result
-                        work_time = time.time() - start_time
-
-                        print(
-                            f"[Worker] Process {self.process_id} working on GPU {gpu_id} ({device}) for {work_time:.2f} seconds"
-                        )
-                        ###############################
-
-                except Exception as e:
-                    print(f"[Worker] Process {self.process_id} encountered error: {e}")
-
-                finally:
-                    try:
-                        del device
-                    except:
-                        pass
-                    print(
-                        f"[Worker] Process {self.process_id} released GPU {gpu_id}"
-                    )
-
-        else:
-            print(f"[Single Worker] Process {self.process_id} requesting GPU 0...")
-            device = torch.device(f"cuda:{self.config.dedicated_gpu_id}")
-            print(f"[Single Worker] Acquired device:", device)
-            if self.config.mock:
-                return
-            else:
+                # TODO look into this more
                 result = get_torch_profiler_info(
-                    ref_arch_src=self.ref_arch_src,
-                    kernel_src=self.kernel_code[self.current_k],
+                    ref_arch_src=self.ref_problem_src,
+                    kernel_src=self.llm_info.kernel_code[self.current_k],
                     build_dir=self.build_dir,
                     device=device,
                 )
-                self.profiler_result[self.current_k] = result
+                self.llm_info.profiler_result[self.current_k] = result
+
                 work_time = time.time() - start_time
-            print(
-                f"[Single Worker] Process working on GPU 0 for {work_time:.2f} seconds"
-            )
-            print(f"[Single Worker] Releasing GPU 0...")
 
-        self.outcome = StateOutcome.PerformanceSuccess
+                if self.config.verbose:
+                    print(
+                        f"[PERF {self.work.problem_id}/{self.work.sample_id}] "
+                        f"Working on GPU {gpu_id} ({device}) for {work_time:.2f} seconds"
+                    )
 
-    def finish_logic(self):
-        """
-        Logic for the finish state.
-        """
-        show_current_state(self.current_k, self.state, self.config.show_state)
-        self.outcome = StateOutcome.Finish
-
-        # Log results as last run if applicable.
-        if self.current_k > self.max_k:
-            # Final eval step, this only happens in the last round
-            assert self.current_k == self.max_k + 1, "Final eval step should only happen in the last round"
-
-            if self.current_k > 1:
-                self.kernel_code[self.current_k] = self.kernel_code[self.current_k - 1]
-
-                # VERY SPECIAL CASE: timeout at last step or memory error
-                can_run = False if ("timeout_error" in self.eval_result[self.current_k - 1].metadata) else True
-
-                if can_run:
-                    self.compile_logic(finish=True)
-                    self.correct_logic(finish=True)
-                else:
-                    # Propagate eval and compile results if it timed out earlier
-                    self.feedback[self.current_k] = self.feedback[self.current_k - 1]
-                    self.eval_result[self.current_k] = self.eval_result[self.current_k - 1]
-
-                self.logger.log_turn(
-                    self.current_k,
-                    self.context.get(self.current_k-1, ""),
-                    self.model_response.get(self.current_k-1, ""),
-                    # Compile + Correctness feedback is Recent
-                    self.kernel_code.get(self.current_k, ""),
-                    self.feedback.get(self.current_k, ""),
-                    self.eval_result.get(self.current_k, ""),
-                    last=True,
+            except Exception as e:
+                print(
+                    f"[PERF {self.work.problem_id}/{self.work.sample_id}] "
+                    f"Working on GPU {gpu_id} encountered error: {e}"
                 )
 
-            # Mark that this run is finished:
-            with open(os.path.join(self.log_dir, "DONE"), "w") as f:
-                pass
+            finally:
+                try:
+                    del device
+                except:
+                    pass
 
-        elif self.current_k <= self.max_k:
-            "CUDA Error or other termination case."
-            self.logger.log_turn(
-                self.current_k,
-                self.context.get(self.current_k, ""),
-                self.model_response.get(self.current_k, ""),
-                # Compile + Correctness feedback is Recent
-                self.kernel_code.get(self.current_k, ""),
-                self.feedback.get(self.current_k, ""),
-                self.eval_result.get(self.current_k, ""),
-            )
+                if self.config.verbose:
+                    print(
+                        f"[PERF {self.work.problem_id}/{self.work.sample_id}] "
+                        f"Released GPU {gpu_id}"
+                    )
+
+        self.outcome = StateOutcome.Performance
+
+    def finish_turn_logic(self):
+        """
+        Logic for the finish state of a turn.
+        """
+
+        # this is reached at the end of each round; if the round, however,
+        # is not the LAST ROUND, we simply pass through to the next round's
+        # start state
+
+        # save the current round's state
+        self.logger.update_turn_and_log(self.current_k, self.llm_info)
+
+        # increment round number
+        self.outcome = StateOutcome.Finish
+        self.current_k += 1
+
+        # IF last round, mark that this run is finished
+        if self.current_k > self.max_k:
+            if self.config.verbose:
+                print(
+                    f"[FINISH {self.work.problem_id}/{self.work.sample_id}] "
+                    "Finished run, writing DONE file"
+                )
+            with open(os.path.join(self.logger.log_dir, "DONE"), "w") as _:
+                pass
