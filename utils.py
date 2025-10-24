@@ -1,12 +1,36 @@
 import os
-from typing import List
-import json
-from pydra import Config
 import signal
+from typing import List
+
 from KernelBenchInternal.utils import read_file
 from KernelBenchInternal.eval import KernelExecResult
+
+
+def exec_log_to_obj(saved_dict: dict) -> KernelExecResult:
+    """
+    Converts a logged dict item to a KernelExecResult.
+    """
+    if isinstance(saved_dict, (KernelExecResult, str)):
+        return saved_dict
+
+    kernel_eval_result = KernelExecResult(
+        compiled=saved_dict.get("compiled", None),
+        correctness=saved_dict.get("correctness", None),
+        metadata=saved_dict.get("metadata", {}),
+        runtime=saved_dict.get("runtime", -1.0),
+        runtime_stats=saved_dict.get("runtime_stats", {})
+    )
+    return kernel_eval_result
+
+
+
+
+
+
 ###########################
 # Prompt Construction
+
+
 
 
 REPO_TOP_PATH = os.path.abspath(
@@ -79,7 +103,7 @@ def prompt_generate_initial(arch_src: str, example_arch_src: str, example_new_ar
 
 def build_context_multi_turn(
         initial_prompt: str,
-        contexts: dict,
+        prompts: dict,
         kernels: dict,
         compiler_feedback: dict,
         eval_result: dict,
@@ -92,8 +116,8 @@ def build_context_multi_turn(
     """
     Build the current context for the given iteration and strategy
     """
+    # TODO rebuild this function
     prompt = initial_prompt
-
 
     # Add feedback
     if "eval_result" in strategy:
@@ -265,16 +289,6 @@ def ensure_json_serializable(obj):
         return ensure_json_serializable(obj.__dict__)
     else:
         return str(obj)  # Convert anything else to string
-
-
-def check_result_exists(log_dir_prefix: str, run_group: str, run_name: str, problem_id: int, sample_id: int) -> bool:
-    """
-    Check if the result for the given run_name, sample_id and problem_id exists.
-    """
-    path = os.path.join(log_dir_prefix, run_group, run_name, f"problem_{str(problem_id)}", f"sample_{str(sample_id)}", "DONE")
-    # print(f"Checking if {path}: {os.path.exists(path)}") # DEBUG
-
-    return os.path.exists(path)
 
 
 def check_result_exists_run_path(run_path: str, problem_id: int, sample_id: int) -> bool:

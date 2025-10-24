@@ -1,31 +1,29 @@
-import torch
-from pydra import Config
 import os
-import re
+import torch
 
-from torch.profiler import profile, record_function, ProfilerActivity
+from torch.profiler import profile, ProfilerActivity
 
 from KernelBenchInternal import eval as kernel_eval
 from KernelBenchInternal import utils as kernel_utils
-from states import CaesarState, StateOutcome, WorkArgs
-from utils import timeout
 
-"""
-Additional Eval Code
-"""
+from caesar_config import CaesarRunConfig
+from utils import timeout
 
 
 def get_kernel_hash(kernel_src: str) -> str:
     return str(hash(kernel_src))
 
-def compile_single_sample(kernel_src: str, config: Config, build_dir: str, timeout_seconds: int = 480):
+def compile_single_sample(kernel_src: str,
+                          config: CaesarRunConfig,
+                          build_dir: str,
+                          timeout_seconds: int = 480):
     """
-    CPU Pre compile kernel and capture any errors
+    CPU Pre compile kernel and capture any errors.
     """
     kernel_utils.set_gpu_arch(config.gpu_arch)
 
-    # Withih this build dir, build_dir/run_name/problem_id/sample_id/kernel_hash/...
-    # we have bin, .c,.cu, .so,.py (temp just for this kernel)
+    # the build dir contains .c, .cu, .so, .o, .py and some ninja files
+    # some of these need to be kept as cache
     kernel_hash = get_kernel_hash(kernel_src)
     kernel_build_dir = os.path.join(build_dir, kernel_hash)
 
@@ -33,10 +31,9 @@ def compile_single_sample(kernel_src: str, config: Config, build_dir: str, timeo
         with timeout(timeout_seconds):
             returncode, stdout, err = kernel_eval.build_compile_cache_with_capturing(
                 custom_model_src=kernel_src,
-                verbose=config.verbose,
+                verbose=False, # config.verbose,
                 build_dir=kernel_build_dir,
             )
-
             return returncode, stdout, err
     except TimeoutError:
         print(f"[WARNING] Compilation timed out after {timeout_seconds} seconds")
@@ -46,7 +43,13 @@ def compile_single_sample(kernel_src: str, config: Config, build_dir: str, timeo
         return -1, str(e), str(e)
 
 
-def evaluate_single_sample_src(ref_arch_src: str, kernel_src: str, configs: Config, build_dir: str, device: torch.device, timeout_seconds: int = 480) -> kernel_eval.KernelExecResult:
+def evaluate_single_sample_src(ref_arch_src: str,
+                               kernel_src: str,
+                               configs: CaesarRunConfig,
+                               build_dir: str,
+                               device: torch.device,
+                               timeout_seconds: int = 480,
+                               ) -> kernel_eval.KernelExecResult:
     """
     Evaluate a single sample source code against a reference architecture source code.
     Args:
@@ -87,20 +90,22 @@ def evaluate_single_sample_src(ref_arch_src: str, kernel_src: str, configs: Conf
         print(f"[WARNING] Last level catch: Some issue evaluating for kernel: {e} ")
         if "CUDA error" in str(e):
             # NOTE: count this as compilation failure as it is not runnable code
-            metadata = {"cuda_error": f"CUDA Error: {str(e)}",
-                        "hardware": torch.cuda.get_device_name(device=device),
-                        "device": str(device)
-                        } # for debugging
+            metadata = {
+                "cuda_error": f"CUDA Error: {str(e)}",
+                "hardware": torch.cuda.get_device_name(device=device),
+                "device": str(device)
+            } # for debugging
 
             metadata = kernel_eval.check_metadata_serializable(metadata)
             eval_result = kernel_eval.KernelExecResult(compiled=False, correctness=False,
                                                 metadata=metadata)
             return eval_result
         else:
-            metadata = {"other_error": f"error: {str(e)}",
-                        "hardware": torch.cuda.get_device_name(device=device),
-                        "device": str(device)
-                        } # for debugging
+            metadata = {
+                "other_error": f"error: {str(e)}",
+                "hardware": torch.cuda.get_device_name(device=device),
+                "device": str(device)
+            } # for debugging
             metadata = kernel_eval.check_metadata_serializable(metadata)
             eval_result = kernel_eval.KernelExecResult(compiled=False, correctness=False,
                                                 metadata=metadata)
@@ -114,7 +119,7 @@ def get_torch_profiler_info(ref_arch_src: str,
                             device: torch.device,
                             num_trials: int = 100,
                             table_row_limit: int = 10,
-                            seed_num: int = 42)->str:
+                            seed_num: int = 42) -> str:
     """
     Get the profiler info for a particular kernel
     Given a KernelBench solution to a problem, we want to profile the kernel
