@@ -11,6 +11,7 @@ class CaesarRunConfig(Config):
         self.dataset_name = "KernelBench/level1"
         self.num_samples = 1 # samples to generate per problem
                             # essentially parallel scaling with no connections between directions for now
+        self.max_k = 10 # multi-turn
 
         # LLM configs
         self.model_name = REQUIRED
@@ -26,9 +27,6 @@ class CaesarRunConfig(Config):
         self.top_k = 50
         self.num_completions = 1 # TODO what is this? beam search?
         self.max_tokens = 4096
-
-        # multi-turn
-        self.max_k = 10
 
         # TODO rework this
         # whether to include generated kernels so far into the current turn
