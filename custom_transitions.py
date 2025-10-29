@@ -12,13 +12,14 @@ class InferenceOnlyNoGPUTransition(Transition):
     def _define_transitions(self) -> Dict[StateOutcome, CaesarState]:
         return {
             StateOutcome.Start: CaesarState.GENERATE_STATE,
-            StateOutcome.Generate: CaesarState.FINISH_STATE,
+            StateOutcome.GenerateSuccess: CaesarState.FINISH_STATE,
+            StateOutcome.GenerateFail: CaesarState.FINISH_STATE,
             StateOutcome.Finish: CaesarState.START_STATE,
 
-            StateOutcome.CPUCompileSuccess: CaesarState.NONE_STATE,
-            StateOutcome.CPUCompileFail: CaesarState.NONE_STATE,
-            StateOutcome.GPUCorrectnessSuccess: CaesarState.NONE_STATE,
-            StateOutcome.GPUCorrectnessFail: CaesarState.NONE_STATE,
+            StateOutcome.CompileSuccess: CaesarState.NONE_STATE,
+            StateOutcome.CompileFail: CaesarState.NONE_STATE,
+            StateOutcome.CorrectnessSuccess: CaesarState.NONE_STATE,
+            StateOutcome.CorrectnessFail: CaesarState.NONE_STATE,
             StateOutcome.Performance: CaesarState.NONE_STATE,
     }
 
@@ -31,11 +32,12 @@ class InferenceAndGPUTransition(Transition):
     def _define_transitions(self) -> Dict[StateOutcome, CaesarState]:
         return {
             StateOutcome.Start: CaesarState.GENERATE_STATE,
-            StateOutcome.Generate: CaesarState.COMPILE_STATE,
-            StateOutcome.CPUCompileSuccess: CaesarState.CORRECTNESS_STATE,
-            StateOutcome.CPUCompileFail: CaesarState.FINISH_STATE,
-            StateOutcome.GPUCorrectnessSuccess: CaesarState.FINISH_STATE,
-            StateOutcome.GPUCorrectnessFail: CaesarState.FINISH_STATE,
+            StateOutcome.GenerateSuccess: CaesarState.COMPILE_STATE,
+            StateOutcome.GenerateFail: CaesarState.FINISH_STATE,
+            StateOutcome.CompileSuccess: CaesarState.CORRECTNESS_STATE,
+            StateOutcome.CompileFail: CaesarState.FINISH_STATE,
+            StateOutcome.CorrectnessSuccess: CaesarState.FINISH_STATE,
+            StateOutcome.CorrectnessFail: CaesarState.FINISH_STATE,
             StateOutcome.Finish: CaesarState.START_STATE,
 
             StateOutcome.Performance: CaesarState.NONE_STATE,
@@ -51,11 +53,12 @@ class InferenceAndGPUAndProfiler(Transition):
     def _define_transitions(self) -> Dict[StateOutcome, CaesarState]:
         return {
             StateOutcome.Start: CaesarState.GENERATE_STATE,
-            StateOutcome.Generate: CaesarState.COMPILE_STATE,
-            StateOutcome.CPUCompileSuccess: CaesarState.CORRECTNESS_STATE,
-            StateOutcome.CPUCompileFail: CaesarState.FINISH_STATE,
-            StateOutcome.GPUCorrectnessSuccess: CaesarState.PERFORMANCE_STATE,
-            StateOutcome.GPUCorrectnessFail: CaesarState.FINISH_STATE,
+            StateOutcome.GenerateSuccess: CaesarState.COMPILE_STATE,
+            StateOutcome.GenerateFail: CaesarState.FINISH_STATE,
+            StateOutcome.CompileSuccess: CaesarState.CORRECTNESS_STATE,
+            StateOutcome.CompileFail: CaesarState.FINISH_STATE,
+            StateOutcome.CorrectnessSuccess: CaesarState.PERFORMANCE_STATE,
+            StateOutcome.CorrectnessFail: CaesarState.FINISH_STATE,
             StateOutcome.Performance: CaesarState.FINISH_STATE,
             StateOutcome.Finish: CaesarState.START_STATE,
     }

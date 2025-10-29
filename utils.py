@@ -49,6 +49,21 @@ def ensure_json_serializable(obj):
         return str(obj)  # Convert anything else to string
 
 
+class Timeout:
+    def __init__(self, seconds):
+        self.seconds = seconds
+
+    def handle_timeout(self, signum, frame):
+        raise TimeoutError(f"Operation timed out after {self.seconds} seconds")
+
+    def __enter__(self):
+        signal.signal(signal.SIGALRM, self.handle_timeout)
+        signal.alarm(int(self.seconds))
+
+    def __exit__(self, type, value, traceback):
+        signal.alarm(0)
+
+
 #####################
 # Runs information
 #####################
@@ -458,18 +473,3 @@ def construct_programatic_prompt_feedback(compiler_feedback: str,
 
     raise ValueError("[Programatic Feedback] You should not reach here")
     return None
-
-
-class timeout:
-    def __init__(self, seconds):
-        self.seconds = seconds
-
-    def handle_timeout(self, signum, frame):
-        raise TimeoutError(f"Operation timed out after {self.seconds} seconds")
-
-    def __enter__(self):
-        signal.signal(signal.SIGALRM, self.handle_timeout)
-        signal.alarm(int(self.seconds))
-
-    def __exit__(self, type, value, traceback):
-        signal.alarm(0)

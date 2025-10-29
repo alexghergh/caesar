@@ -7,18 +7,19 @@ from KernelBenchInternal import eval as kernel_eval
 from KernelBenchInternal import utils as kernel_utils
 
 from caesar_config import CaesarRunConfig
-from utils import timeout
+from utils import Timeout
 
 
 def get_kernel_hash(kernel_src: str) -> str:
     return str(hash(kernel_src))
 
+
 def compile_single_sample(kernel_src: str,
                           config: CaesarRunConfig,
                           build_dir: str,
-                          timeout_seconds: int = 480):
+                          timeout_seconds: int = 480) -> tuple[int, str, str]:
     """
-    CPU Pre compile kernel and capture any errors.
+    Compile kernel on CPU and capture errors.
     """
     kernel_utils.set_gpu_arch(config.gpu_arch)
 
@@ -28,10 +29,10 @@ def compile_single_sample(kernel_src: str,
     kernel_build_dir = os.path.join(build_dir, kernel_hash)
 
     try:
-        with timeout(timeout_seconds):
+        with Timeout(timeout_seconds):
             returncode, stdout, err = kernel_eval.build_compile_cache_with_capturing(
                 custom_model_src=kernel_src,
-                verbose=False, # config.verbose,
+                verbose=False,
                 build_dir=kernel_build_dir,
             )
             return returncode, stdout, err
@@ -51,40 +52,36 @@ def evaluate_single_sample_src(ref_arch_src: str,
                                timeout_seconds: int = 480,
                                ) -> kernel_eval.KernelExecResult:
     """
-    Evaluate a single sample source code against a reference architecture source code.
-    Args:
-        timeout_seconds: Maximum time in seconds to wait for evaluation (default 8 minutes)
+    Evaluate a single sample source code against a reference architecture source
+    code.
     """
-    # TODO: Figure out how to compile correctly. Recompile for now
     kernel_hash = get_kernel_hash(kernel_src)
     build_dir = os.path.join(build_dir, kernel_hash)
 
-    # temp_name = kernel_hash[1:]
-    # kernel_src = re.sub(r'name="[^"]*"', f'name="{temp_name}"', kernel_src)
-
     try:
-        with timeout(timeout_seconds):
+        with Timeout(timeout_seconds):
             eval_result = kernel_eval.eval_kernel_against_ref(
                 original_model_src=ref_arch_src,
                 custom_model_src=kernel_src,
-                measure_performance=configs.measure_performance,
-                verbose=configs.verbose,
+                measure_performance=True,
+                verbose=False,
                 num_correct_trials=configs.num_correct_trials,
                 num_perf_trials=configs.num_perf_trials,
-                # move this to config in monkeys
                 build_dir=build_dir,
                 device=device
             )
             return eval_result
     except TimeoutError:
         print(f"[WARNING] Evaluation timed out after {timeout_seconds} seconds")
-        metadata = {"timeout_error": f"Evaluation timed out after {timeout_seconds} seconds",
-                    "hardware": torch.cuda.get_device_name(device=device),
-                    "device": str(device)
-                    }
+        metadata = {
+            "timeout_error": f"Evaluation timed out after {timeout_seconds} seconds",
+            "hardware": torch.cuda.get_device_name(device=device),
+            "device": str(device)
+        }
         metadata = kernel_eval.check_metadata_serializable(metadata)
-        eval_result = kernel_eval.KernelExecResult(compiled=False, correctness=False,
-                                            metadata=metadata)
+        eval_result = kernel_eval.KernelExecResult(
+            compiled=False, correctness=False, metadata=metadata
+        )
         return eval_result
     except Exception as e:
         print(f"[WARNING] Last level catch: Some issue evaluating for kernel: {e} ")
@@ -94,22 +91,27 @@ def evaluate_single_sample_src(ref_arch_src: str,
                 "cuda_error": f"CUDA Error: {str(e)}",
                 "hardware": torch.cuda.get_device_name(device=device),
                 "device": str(device)
-            } # for debugging
+            }
 
             metadata = kernel_eval.check_metadata_serializable(metadata)
-            eval_result = kernel_eval.KernelExecResult(compiled=False, correctness=False,
-                                                metadata=metadata)
+            eval_result = kernel_eval.KernelExecResult(
+                compiled=False, correctness=False, metadata=metadata
+            )
             return eval_result
         else:
             metadata = {
                 "other_error": f"error: {str(e)}",
                 "hardware": torch.cuda.get_device_name(device=device),
                 "device": str(device)
-            } # for debugging
+            }
             metadata = kernel_eval.check_metadata_serializable(metadata)
-            eval_result = kernel_eval.KernelExecResult(compiled=False, correctness=False,
-                                                metadata=metadata)
+            eval_result = kernel_eval.KernelExecResult(
+                compiled=False, correctness=False, metadata=metadata
+            )
             return eval_result
+
+
+
 
 
 

@@ -15,31 +15,10 @@ from KernelBenchInternal.dataset import (
 
 from state_machine import CaesarStateMachine
 from work import WorkArgs
-from custom_transitions import InferenceOnlyNoGPUTransition, InferenceAndGPUTransition
+from custom_transitions import InferenceAndGPUTransition
 from logger import CaesarLogger
 from caesar_config import CaesarRunConfig
 from orchestrator import GPUOrchestrator
-
-
-class MyC(CaesarRunConfig):
-    def __init__(self):
-        super().__init__()
-        self.model_name="lulle"
-        self.run_name="lol_name"
-        self.run_group="lol_group"
-        self.server_type="local"
-        # state_machine_strategy="lol"
-        # context_strategy="reflection"
-        self.use_last_only=True
-        self.max_feedback_length=4096
-        self.log_dir_prefix="lol_log"
-        self.build_dir_prefix="lol_build"
-        self.show_state=True
-        self.timeout=100000
-        self.num_samples=2
-        self.num_workers=1 # mp.cpu_count()
-        self.max_k=3
-        self.verbose=True
 
 
 dataset_name_to_dataset = {
@@ -76,9 +55,6 @@ def init_and_run_single_sample_work(
         workargs,
     )
 
-    # TODO error checking? if something goes bad, maybe catch an exception, and
-    # then simply put this back into the work queue (possibly with a fixed
-    # number of retries)
     stm = CaesarStateMachine(
         transition,
         config,
@@ -154,7 +130,7 @@ def launch_worker_process(
             break
 
 
-@pydra.main(base=MyC)
+@pydra.main(base=CaesarRunConfig)
 def main(config: CaesarRunConfig):
     # TODOs:
     # - right now, the samples per problem are independent (i.e. each separately

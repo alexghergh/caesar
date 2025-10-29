@@ -20,15 +20,16 @@ class StateOutcome(Enum):
     Start = "start"
 
     # Outcomes for GENERATE_STATE
-    Generate = "generate"
+    GenerateSuccess = "generate_success"
+    GenerateFail = "generate_fail"
 
     # Outcomes for COMPILE_STATE
-    CPUCompileSuccess = "cpu_compile_success"
-    CPUCompileFail = "cpu_compile_fail"
+    CompileSuccess = "compile_success"
+    CompileFail = "compile_fail"
 
     # Outcomes for CORRECTNESS_STATE
-    GPUCorrectnessSuccess = "gpu_correctness_success"
-    GPUCorrectnessFail = "gpu_correctness_fail"
+    CorrectnessSuccess = "correctness_success"
+    CorrectnessFail = "correctness_fail"
 
     # Outcomes for PERFORMANCE_STATE
     Performance = "performance"

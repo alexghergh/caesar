@@ -75,7 +75,7 @@ class CaesarStateMachine:
             print(
                 f"[SKIP] Run {self.config.run_name}, problem id {self.work.problem_id}, sample {self.work.sample_id} already finished... skipping"
             )
-            self.finished = True
+            self.finished = True # skip the whole run
             return
 
         # check if previous run exists
@@ -256,15 +256,17 @@ class CaesarStateMachine:
 
         kernel_code = extract_last_code(model_response, ["python", "cpp"])
 
-        # TODO continue rounds, but have another prompt that tells the model it
-        # failed; or simply move to the next round and forget this round
-        # altogether; in this case, careful of "build_context" func
-        assert kernel_code is not None and len(kernel_code) > 0, "[Error] Kernel code is Empty, model generation FAILED"
-        # self.outcome = StateOutcome.GenerateFailed # <- possibly
-
-        self.llm_info.kernel_code[self.current_k] = kernel_code
-
-        self.outcome = StateOutcome.Generate
+        # if we failed to generate a kernel, simply move to the next round
+        if kernel_code is None or len(kernel_code) == 0:
+            if self.config.verbose:
+                print(
+                    f"[GENERATE {self.work.problem_id}/{self.work.sample_id}] "
+                    "Failed to generate kernel code."
+                )
+            self.outcome = StateOutcome.GenerateFail
+        else:
+            self.llm_info.kernel_code[self.current_k] = kernel_code
+            self.outcome = StateOutcome.GenerateSuccess
 
     def compile_logic(self):
         """
@@ -297,7 +299,7 @@ class CaesarStateMachine:
                     "device": "cpu",
                 }
             )
-            self.outcome = StateOutcome.CPUCompileSuccess
+            self.outcome = StateOutcome.CompileSuccess
         else:
             compiler_feedback = f"Compilation failed.\nstdout: {stdout}\nstderr: {err}"
             self.llm_info.feedback[self.current_k] = compiler_feedback
@@ -312,7 +314,7 @@ class CaesarStateMachine:
                     "device": "cpu"
                 }
             )
-            self.outcome = StateOutcome.CPUCompileFail
+            self.outcome = StateOutcome.CompileFail
 
     def correctness_check_logic(self):
         """
@@ -353,22 +355,11 @@ class CaesarStateMachine:
                 # record result (fields should be correctly set)
                 self.llm_info.eval_result[self.current_k] = result
 
-                if result is not None:
-                    if "cuda_error" in result.metadata:  # TODO only cuda error?
-                        print(
-                            f"[CORRECTNESS {self.work.problem_id}/{self.work.sample_id}] "
-                            "CUDA Error detected"
-                        )
-                        self.outcome = StateOutcome.GPUCorrectnessFail
-                        return
-
-                    # if compiled and is correct
-                    if result.compiled and result.correctness:
-                        self.outcome = StateOutcome.GPUCorrectnessSuccess
-                    else:
-                        self.outcome = StateOutcome.GPUCorrectnessFail
+                # if compiled and is correct
+                if result is not None and result.compiled and result.correctness:
+                    self.outcome = StateOutcome.CorrectnessSuccess
                 else:
-                    self.outcome = StateOutcome.GPUCorrectnessFail
+                    self.outcome = StateOutcome.CorrectnessFail
 
                 if self.config.verbose:
                     print(
@@ -376,12 +367,12 @@ class CaesarStateMachine:
                         f"Working on GPU {gpu_id} ({device}) for {work_time:.2f} seconds"
                     )
 
-            except TimeoutError:  # TODO this never reaches, does it?
+            except TimeoutError:
                 print(
                     f"[CORRECTNESS {self.work.problem_id}/{self.work.sample_id}] "
                     f"Working on GPU {gpu_id} operation timed out"
                 )
-                self.outcome = StateOutcome.GPUCorrectnessFail
+                self.outcome = StateOutcome.CorrectnessFail
                 self.llm_info.eval_result[self.current_k] = kernel_eval.KernelExecResult(
                     compiled=False,
                     correctness=False,
