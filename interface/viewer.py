@@ -3,33 +3,11 @@ import re
 import sys
 import json
 import traceback
-import subprocess
 from pathlib import Path
 
 from fasthtml.common import (
-    fast_app,
-    serve,
-    Titled,
-    Script,
-    Div,
-    Span,
-    Form,
-    Select,
-    Option,
-    Input,
-    Label,
-    Button,
-    Details,
-    Summary,
-    Pre,
-    P,
-    A,
-    H2,
-    Code,
-    Table,
-    Tr,
-    Th,
-    Td,
+    HighlightJS, MarkdownJS, fast_app, serve, Script, Div, Span, Details, Summary, Pre, P, A, H2, Code,
+    Table, Tr, Th, Td, Br
 )
 from KernelBenchInternal.dataset import (
     KernelBenchDataset,
@@ -38,32 +16,19 @@ from KernelBenchInternal.dataset import (
     KERNELBENCH_LEVEL_3_DATASET, KERNELBENCH_LEVEL_3_SUBSET_DATASET,
 )
 
-# from run_mapping import (
-#     RUN_MAPPING_LEVEL_1,
-#     RUN_MAPPING_LEVEL_2,
-#     RUN_MAPPING_LEVEL_3
-# )
-
-
 # get root caesar directory (i.e., the parent of 'interface')
 ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 
 # add sys paths (needed for python import discovery)
 sys.path.append(ROOT_DIR)
-# sys.path.append(os.path.join(ROOT_DIR, 'analysis'))
 
 from utils import (
-    get_available_run_groups,
-    get_available_runs,
     get_available_problem_ids,
     get_run_group_finished_runs,
     get_prev_problem_id,
     get_next_problem_id,
     load_json_data,
-    #
     get_turn_trajectory_overviews,
-    get_turns,
-    get_available_runs,
     fetch_baseline_time_by_problem_id,
 )
 
@@ -79,78 +44,11 @@ dataset_name_to_dataset = {
     "KernelBench/level3-subset": KERNELBENCH_LEVEL_3_SUBSET_DATASET,
 }
 
-# TODO
-# # Add these constants before the route definitions
-LEVELS = ["level1", "level2", "level3"]
-STRATEGIES = [
-    "reflection_all_prev",
-    "reflection_last_only",
-    "eval_result_last_only",
-    "eval_result_profiler_last_only"
-]
-MODELS = [
-    "deepseek-v3",
-    "llama-3.1-70b-inst",
-    "deepseek-R1"
-]
-
-# TODO
-# get timing comparisons
-# baseline_time_filepath = os.path.join(KERNELBENCH_REPO_DIR, "KernelBench", "results", "timing", "H100_tsubame", "baseline_time_torch.json")
-# baseline_torch_compile_time_filepath = os.path.join(PATH_TO_REPO_DIR, "KernelBench", "results", "timing", "H100_tsubame", "baseline_time_torch_compile_inductor_default.json")
-
-
 # fastapi config
 PORT = 5008
 HOST_IP = 'localhost'
-print(f"[INFO] Starting Viewer at {HOST_IP}:{PORT}")
+app, rt = fast_app(hdrs=(MarkdownJS(), HighlightJS(langs=['python'])))
 
-app, rt = fast_app()
-
-# @route('/update_problem_list')
-# def get(run_name: str):
-#     """Update problem list when run is selected"""
-#     return Input(
-#         type="number",
-#         name="problem_id",
-#         id="problem-select",
-#         placeholder="Problem ID",
-#         min="1",
-#         hx_get="/update_sample_list",
-#         hx_target="#sample-container",
-#         hx_trigger="change",
-#         value="1",
-#         _="on change trigger refreshSamples",
-#         style="margin-left: 10px; margin-right: 10px;"
-#     )
-#
-# @route('/update_sample_list')
-# def get(run_name: str, problem_id: str):
-#     """Update sample list when problem is selected"""
-#     return Input(
-#         type="number",
-#         name="sample_id",
-#         id="sample-select",
-#         placeholder="Sample ID",
-#         min="0",
-#         hx_trigger="change",
-#         value="0",
-#         style="margin-left: 10px; margin-right: 10px;"
-#     )
-#
-# @route('/update_run_list')
-# def get(run_group: str):
-#     """Update run list when run group is selected"""
-#     runs = get_available_runs(BASE_LOG_DIR, run_group)
-#     return Select(
-#         *[Option(run, value=run) for run in runs],
-#         name="run_name",
-#         id="run-select",
-#         hx_get="/update_problem_list",
-#         hx_target="#problem-container",
-#         hx_trigger="change",
-#         style="margin-right: 10px;"
-#     )
 
 @rt('/view_results')
 def get(run_group: str, run_name: str, problem_id: str, sample_id: str):
@@ -171,7 +69,7 @@ def get(run_group: str, run_name: str, problem_id: str, sample_id: str):
 
     # TODO buttons for samples
     # nav buttons
-    navigation_buttons = Div(
+    problem_navigation_buttons = Div(
         A(
             "Previous problem",
             href=(
@@ -223,25 +121,70 @@ def get(run_group: str, run_name: str, problem_id: str, sample_id: str):
             onmouseover="this.style.backgroundColor='#0056b3';",
             onmouseout="this.style.backgroundColor='#007bff';",
         ),
-        Script("""
-            document.addEventListener('keydown', function(e) {
-                if (e.key === 'a' || e.key === 'A') {
-                    document.getElementById('prev-problem-button').click();
-                } else if (e.key === 'd' || e.key === 'D') {
-                    document.getElementById('next-problem-button').click();
-                }
-            });
-        """),
+        style="display: flex; align-items: center; justify-content: flex-end; margin-bottom: 20px;",
+    )
+    sample_navigation_buttons = Div(
+        A(
+            "Previous sample",
+            href=(
+                f"/view_results?"
+                    f"run_group={run_group}&"
+                    f"run_name={run_name}&"
+                    f"problem_id={problem_id}&"
+                    f"sample_id={int(sample_id) - 1}"
+            ),
+            style=(
+                "display:inline-block;"
+                "padding:0.5em 1em;"
+                "background-color:#007bff;"
+                "color:white;"
+                "text-decoration:none;"
+                "border:none;"
+                "border-radius:4px;"
+                "font-size:1rem;"
+                "cursor:pointer;"
+                "transition:background-color 0.2s ease;"
+            ),
+            id="prev-problem-button",
+            onmouseover="this.style.backgroundColor='#0056b3';",
+            onmouseout="this.style.backgroundColor='#007bff';",
+        ),
+        A(
+            "Next sample",
+            href=(
+                f"/view_results?"
+                    f"run_group={run_group}&"
+                    f"run_name={run_name}&"
+                    f"problem_id={problem_id}&"
+                    f"sample_id={int(sample_id) + 1}"
+            ),
+            style=(
+                "display:inline-block;"
+                "padding:0.5em 1em;"
+                "background-color:#007bff;"
+                "color:white;"
+                "text-decoration:none;"
+                "border:none;"
+                "border-radius:4px;"
+                "font-size:1rem;"
+                "cursor:pointer;"
+                "transition:background-color 0.2s ease;"
+                "margin-left: 5px;"
+            ),
+            id="next-problem-button",
+            onmouseover="this.style.backgroundColor='#0056b3';",
+            onmouseout="this.style.backgroundColor='#007bff';",
+        ),
         style="display: flex; align-items: center; justify-content: flex-end; margin-bottom: 20px;",
     )
 
     ui_elements = []
     ui_elements.append(run_group_stats)
-    ui_elements.append(navigation_buttons)
+    ui_elements.append(problem_navigation_buttons)
+    ui_elements.append(sample_navigation_buttons)
 
     sample_base_dir = os.path.join(BASE_LOG_DIR, run_group, run_name, f"problem_{problem_id}", f"sample_{sample_id}")
 
-    # TODO Navigate even if it doesn't exist, the problems is to constct the database object
     if not os.path.exists(os.path.join(sample_base_dir, "DONE")):
         not_found_content = Div(
             P(f"Result not found for Run Group {run_group} Run Name {run_name} Problem ID {problem_id} Sample ID {sample_id}"),
@@ -383,13 +326,33 @@ def get(run_group: str, run_name: str, problem_id: str, sample_id: str):
             Script(f"""
                 function initializePlot() {{
                     var turns = Array.from({{length: {len(turn_runtime_trajectory)}}}, (_, i) => i + 1);
+                    var y_values = {turn_runtime_trajectory};
+
+                    // invalid runtimes (runtime = -1.0) will be marked separately
+                    var invalidRuntimes = y_values.map((value, index) => value === -1.0 ? index : -1).filter(index => index !== -1);
+
                     var data = [
                         {{
                             x: turns,
-                            y: {turn_runtime_trajectory},
+                            y: y_values,
                             type: 'scatter',
                             mode: 'lines+markers',
                             name: 'Runtime'
+                        }},
+                        {{
+                            x: invalidRuntimes.map(i => turns[i]),
+                            y: invalidRuntimes.map(i => y_values[i]),
+                            mode: 'markers',
+                            name: 'Missing values',
+                            marker: {{
+                                symbol: 'circle', // Circle markers for NaNs
+                                size: 10,
+                                color: 'red', // Color for missing values
+                                line: {{
+                                    width: 2,
+                                    color: 'black' // Outline for better visibility
+                                }}
+                            }}
                         }},
                         {{
                             x: [1, {len(turn_runtime_trajectory)}],
@@ -608,13 +571,15 @@ def get(run_group: str, run_name: str, problem_id: str, sample_id: str):
                             ),
                         ),
                         Pre(
-                            turn_data["prompt"],
-                            style=(
-                                "white-space: pre-wrap;"
-                                "background-color: #f8f8f8;"
-                                "padding: 10px;"
-                                "border-radius: 4px;"
-                            ),
+                            Code(
+                                turn_data["prompt"],
+                                style=(
+                                    "white-space: pre-wrap;"
+                                    "background-color: #f8f8f8;"
+                                    "padding: 10px;"
+                                    "border-radius: 4px;"
+                                ),
+                            )
                         ),
                         style="margin-bottom: 10px;",
                     ),
@@ -628,13 +593,15 @@ def get(run_group: str, run_name: str, problem_id: str, sample_id: str):
                             ),
                         ),
                         Pre(
-                            turn_data["kernel_code"],
-                            style=(
-                                "white-space: pre-wrap;"
-                                "background-color: #f8f8f8;"
-                                "padding: 10px;"
-                                "border-radius: 4px;"
-                            ),
+                            Code(
+                                turn_data["kernel_code"],
+                                style=(
+                                    "white-space: pre-wrap;"
+                                    "background-color: #f8f8f8;"
+                                    "padding: 10px;"
+                                    "border-radius: 4px;"
+                                ),
+                            )
                         ),
                         style="margin-bottom: 10px;",
                     ),
@@ -647,17 +614,16 @@ def get(run_group: str, run_name: str, problem_id: str, sample_id: str):
                                 "background-color: #f0f0f0;"
                             ),
                         ),
-                        Pre(
-                            f"Compiled: {turn_data['eval_result']['compiled']}\n"
-                            f"Correct: {turn_data['eval_result']['correctness']}\n"
-                            f"Runtime: {turn_data['eval_result']['runtime']} ms\n"
+                        Div(
+                            f"Compiled: {turn_data['eval_result']['compiled']}<br>"
+                            f"Correct: {turn_data['eval_result']['correctness']}<br>"
+                            f"Runtime: {turn_data['eval_result']['runtime']} ms<br>"
                             f"Metadata: {turn_data['eval_result']['metadata']}",
                             style=(
-                                "white-space: pre-wrap;"
                                 "background-color: #f8f8f8;"
-                                "padding: 10px;"
                                 "border-radius: 4px;"
                             ),
+                            cls="marked",
                         ),
                         style="margin-bottom: 10px;",
                     ),
@@ -670,14 +636,13 @@ def get(run_group: str, run_name: str, problem_id: str, sample_id: str):
                                 "background-color: #f0f0f0;"
                             ),
                         ),
-                        Pre(
-                            turn_data.get("feedback", "No feedback available"),
+                        Div(
+                            "No feedback available" if turn_data.get("feedback", "") == "" else turn_data.get("feedback"),
                             style=(
-                                "white-space: pre-wrap;"
                                 "background-color: #f8f8f8;"
-                                "padding: 10px;"
                                 "border-radius: 4px;"
                             ),
+                            cls="marked",
                         ),
                         style="margin-bottom: 10px;",
                     ),
@@ -727,141 +692,5 @@ def get(run_group: str, run_name: str, problem_id: str, sample_id: str):
             ),
         )
 
-# @route('/update_run_info')
-# def get(level: str, strategy: str, model: str):
-#     """Update run group and name based on mapping selection"""
-#     try:
-#         mapping = {
-#             "level1": RUN_MAPPING_LEVEL_1,
-#             "level2": RUN_MAPPING_LEVEL_2,
-#             "level3": RUN_MAPPING_LEVEL_3
-#         }[level]
-#
-#         run_info = mapping[strategy][model]
-#
-#         return Div(
-#             Input(
-#                 type="hidden",
-#                 name="run_group",
-#                 value=run_info["run_group"]
-#             ),
-#             Input(
-#                 type="hidden",
-#                 name="run_name",
-#                 value=run_info["run_name"]
-#             ),
-#             # Display the selected values
-#             P(f"Selected Run Group: {run_info['run_group']}", style="margin: 5px 0;"),
-#             P(f"Selected Run Name: {run_info['run_name']}", style="margin: 5px 0;")
-#         )
-#     except KeyError:
-#         return P("No mapping found for this combination", style="color: red;")
-
-# @rt('/')
-# def get():
-#     return Titled(
-#         "KernelBench Multi-Turn Viewer",
-#         Script("https://unpkg.com/htmx.org@1.9.10"),
-#         Script("https://unpkg.com/hyperscript.org@0.9.12"),
-#
-#         Div(
-#             Span("KernelBench Multi-Turn Viewer"),
-#             Span(f"{HOST_IP}:{PORT}", style="margin-left: auto; font-size: 0.6em;"),
-#             style="display: flex; justify-content: space-between; align-items: center; width: 100%; margin-bottom: 20px;"
-#         ),
-#
-#         Div(
-#             Form(
-#                 Div(
-#                     # Structured selector
-#                     Div(
-#                         # Level selector
-#                         Select(
-#                             # *[Option(f"Level {level[-1]}", value=level) for level in LEVELS],
-#                             name="level",
-#                             id="level-select",
-#                             hx_get="/update_run_info",
-#                             hx_include="[name='strategy'],[name='model']",
-#                             hx_target="#run-info",
-#                             hx_trigger="change",
-#                             style="margin-right: 10px; width: 150px;"
-#                         ),
-#                         # Strategy selector
-#                         Select(
-#                             *[Option(strategy.replace("_", " ").title(), value=strategy) for strategy in STRATEGIES],
-#                             name="strategy",
-#                             id="strategy-select",
-#                             hx_get="/update_run_info",
-#                             hx_include="[name='level'],[name='model']",
-#                             hx_target="#run-info",
-#                             hx_trigger="change",
-#                             style="margin-right: 10px; width: 250px;"
-#                         ),
-#                         # Model selector
-#                         Select(
-#                             *[Option(model, value=model) for model in MODELS],
-#                             name="model",
-#                             id="model-select",
-#                             hx_get="/update_run_info",
-#                             hx_include="[name='level'],[name='strategy']",
-#                             hx_target="#run-info",
-#                             hx_trigger="change",
-#                             style="margin-right: 10px; width: 200px;"
-#                         ),
-#                         style="display: flex; align-items: center; margin-bottom: 10px;"
-#                     ),
-#                     # Container for run info that will be updated
-#                     Div(
-#                         id="run-info",
-#                         style="margin-bottom: 10px;"
-#                     ),
-#                     # Problem input
-#                     Div(
-#                         Input(
-#                             type="number",
-#                             name="problem_id",
-#                             placeholder="Problem ID",
-#                             min="1",
-#                             value="1",
-#                             style="margin-right: 10px; width: 150px;"
-#                         ),
-#                         # Sample input
-#                         Input(
-#                             type="number",
-#                             name="sample_id",
-#                             placeholder="Sample ID",
-#                             min="0",
-#                             value="0",
-#                             style="margin-right: 10px; width: 150px;"
-#                         ),
-#                         style="display: flex; align-items: center; margin-bottom: 10px;"
-#                     ),
-#                     # Use subset checkbox
-#                     Div(
-#                         Label(
-#                             Input(
-#                                 type="checkbox",
-#                                 name="use_subset",
-#                                 value="true",
-#                                 style="margin-right: 5px;"
-#                             ),
-#                             "Use Subset",
-#                             style="display: flex; align-items: center;"
-#                         ),
-#                         style="margin-bottom: 10px;"
-#                     ),
-#                     Button(
-#                         "View Results",
-#                         type="submit",
-#                         style="background-color: green; color: white; width: 200px;"
-#                     ),
-#                 ),
-#                 hx_post="/view_results",
-#                 hx_target="#result"
-#             ),
-#             Div(id="result", style="width: 100%;"),
-#             style="width: 100%;"
-#         )
-#     )
 
 serve(port=PORT)

@@ -156,25 +156,13 @@ def get_next_problem_id(available_problems: list, current_problem_id: int) -> in
     )
 
 
-
-
-
-
-
-def get_turns(log_data: dict):
-    """Get all turn numbers, excluding 'metadata'"""
-    turns = [k for k in log_data.keys() if k.isdigit()]
-    return sorted(turns, key=int)
-
-
-def get_turn_trajectory_overviews(log_data: dict, max_turns: int = None):
-    """Get the trajectory of compilation, correctness, and runtime over turns"""
+def get_turn_trajectory_overviews(
+    log_data: dict, max_turns: int,
+) -> tuple[list, list, list]:
+    """Get the trajectory of compilation, correctness, and runtime over turns."""
     turn_compile_trajectory = []
     turn_correct_trajectory = []
     turn_runtime_trajectory = []
-
-    # Get all turn numbers, excluding 'metadata'
-    # turns = [k for k in log_data.keys() if k.isdigit()]
 
     for turn in range(1, max_turns + 1):
         turn_data = log_data[str(turn)]
@@ -183,13 +171,11 @@ def get_turn_trajectory_overviews(log_data: dict, max_turns: int = None):
             turn_compile = None
             turn_correct = None
             turn_runtime = None
-
         else:
             turn_compile = turn_data['eval_result'].get('compiled', None)
             turn_correct = turn_data['eval_result'].get('correctness', None)
             turn_runtime = turn_data['eval_result'].get('runtime', -1)
 
-        # TODO: maybe put a try catch here?
         turn_compile_trajectory.append(turn_compile)
         turn_correct_trajectory.append(turn_correct)
         turn_runtime_trajectory.append(turn_runtime)
@@ -197,16 +183,13 @@ def get_turn_trajectory_overviews(log_data: dict, max_turns: int = None):
     return turn_compile_trajectory, turn_correct_trajectory, turn_runtime_trajectory
 
 
-
-
-
 def fetch_baseline_time_by_problem_id(
     baseline_time_filepath: str, level: int, problem_id: int
 ) -> dict:
     """
     Fetch the baseline time from the timing information file.
-    Given problem_id is the LOGICAL index of the problem in the dataset.
-    This should match the problem id in the name of the problem.
+    The problem_id parameter is the LOGICAL index of the problem in the dataset.
+    This should match the problem_id in the name of the problem.
     """
     if not os.path.exists(baseline_time_filepath):
         raise FileNotFoundError(
