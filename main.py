@@ -1,9 +1,11 @@
 import os
+import time
 import queue
 import multiprocessing as mp
 
 import torch
 import pydra
+from tqdm import tqdm
 
 from KernelBenchInternal.dataset import (
     KernelBenchDataset,
@@ -29,6 +31,34 @@ dataset_name_to_dataset = {
     "KernelBench/level2-subset": KERNELBENCH_LEVEL_2_SUBSET_DATASET,
     "KernelBench/level3-subset": KERNELBENCH_LEVEL_3_SUBSET_DATASET,
 }
+
+
+def create_work_queue(
+    dataset: KernelBenchDataset,
+    config: CaesarRunConfig,
+) -> mp.Queue:
+    """
+    Create a work queue of processes.
+    """
+
+    # create work list; these are the problems to be solved
+    work_list = []
+    for problem_id in dataset.get_problem_ids():
+        for sample_id in range(1, config.num_samples + 1):
+            workargs = WorkArgs(problem_id=problem_id, sample_id=sample_id, problem_path="")
+            workargs.problem_path = dataset.get_problem_path_by_id(workargs.problem_id)
+
+            work_list.append(workargs)
+
+    if config.verbose:
+        print(f"Created {len(work_list)} problems to solve")
+
+    # add these to a global work queue across workers
+    work_queue = mp.Queue()
+    for work in work_list:
+        work_queue.put(work)
+
+    return work_queue
 
 
 def init_and_run_single_sample_work(
@@ -66,38 +96,11 @@ def init_and_run_single_sample_work(
     stm.run()
 
 
-def create_work_queue(
-    dataset: KernelBenchDataset,
-    config: CaesarRunConfig,
-) -> mp.Queue:
-    """
-    Create a work queue of processes.
-    """
-
-    # create work list; these are the problems to be solved
-    work_list = []
-    for problem_id in [23]:# dataset.get_problem_ids():
-        for sample_id in range(1, config.num_samples + 1):
-            workargs = WorkArgs(problem_id=problem_id, sample_id=sample_id, problem_path="")
-            workargs.problem_path = dataset.get_problem_path_by_id(workargs.problem_id)
-
-            work_list.append(workargs)
-
-    if config.verbose:
-        print(f"Created {len(work_list)} problems to solve")
-
-    # add these to a global work queue across workers
-    work_queue = mp.Queue()
-    for work in work_list:
-        work_queue.put(work)
-
-    return work_queue
-
-
 def launch_worker_process(
     config: CaesarRunConfig,
     orchestrator: GPUOrchestrator,
-    proc_queue: mp.Queue
+    proc_queue: mp.Queue,
+    progress: mp.Value,
 ) -> None:
     """
     Launch a worker process. This is meant to be launched in a multiprocessing
@@ -112,15 +115,17 @@ def launch_worker_process(
             if config.verbose:
                 print(f"CPU worker {os.getpid()} starting work {work}")
 
-            # creat and launch process
+            # create and launch process
             work_proc = mp.Process(
                     target=init_and_run_single_sample_work,
                     args=(config, orchestrator, work)
             )
             work_proc.start()
-
-            # TODO timeout this join
             work_proc.join()
+
+            # update global progress
+            with progress.get_lock():
+                progress.value += 1
 
             if config.verbose:
                 print(f"CPU worker {os.getpid()} finished work {work}")
@@ -143,6 +148,9 @@ def main(config: CaesarRunConfig):
     # some samples did not finish
     # - write intermediate logs after each state machine state
     # - better handling of GPU stuff, seems to be broken?
+    # - CoT/ICL examples of progressive optimization
+    # - summaries of previous rounds / compiler feedback etc.
+    # - RAG
 
     if config.verbose:
         print("Running with config: ", config)
@@ -159,12 +167,15 @@ def main(config: CaesarRunConfig):
     # global work queue
     work_queue = create_work_queue(dataset, config)
 
-    # TODO proper worker queue and stuff, need ID's to track .name is not enough
+    # track global problem progress
+    progress = mp.Value('i', 0, lock=True)
+
     # launch CPU workers
     workers_list = []
     for worker in range(config.num_workers):
         worker_proc = mp.Process(
-            target=launch_worker_process, args=(config, orchestrator, work_queue),
+            target=launch_worker_process,
+            args=(config, orchestrator, work_queue, progress),
         )
 
         if config.verbose:
@@ -173,7 +184,13 @@ def main(config: CaesarRunConfig):
         worker_proc.start()
         workers_list.append(worker_proc)
 
-    # TODO some form of tracking here (atomic counter)
+    # tqdm progress tracker
+    with tqdm(total=work_queue.qsize(), desc="Overall progress") as pbar:
+        while not work_queue.empty():
+            time.sleep(1)
+            pbar.n = progress.value
+            pbar.last_print_n = progress.value
+            pbar.update(0)
 
     # wait for all CPU workers to finish
     for worker_proc in workers_list:

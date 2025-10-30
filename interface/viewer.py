@@ -67,7 +67,6 @@ def get(run_group: str, run_name: str, problem_id: str, sample_id: str):
     # problem name to problem ids
     problems = get_available_problem_ids(BASE_LOG_DIR, run_group, run_name)
 
-    # TODO buttons for samples
     # nav buttons
     problem_navigation_buttons = Div(
         A(
@@ -232,14 +231,14 @@ def get(run_group: str, run_name: str, problem_id: str, sample_id: str):
         # TODO properly make this function into a kernelbench eval.py function,
         # so we don't depend on a relative path here
         # fetch timing baselines
-        level = int(re.search(r"\d+", config_data["dataset_name"]).group())
         baseline_time_filepath = (
             "../KernelBench/results/timing/H100_tsubame_2/baseline_time_torch.json"
         )
         baseline_torch_compile_time_filepath = (
-                "../KernelBench/results/timing/H100_tsubame_2/baseline_time_torch_compile_inductor_default.json"
+            "../KernelBench/results/timing/H100_tsubame_2/baseline_time_torch_compile_inductor_default.json"
         )
 
+        level = int(re.search(r"\d+", config_data["dataset_name"]).group())
         baseline_torch_time = fetch_baseline_time_by_problem_id(
             baseline_time_filepath=baseline_time_filepath,
             level=level,
@@ -303,12 +302,9 @@ def get(run_group: str, run_name: str, problem_id: str, sample_id: str):
         )
         ui_elements.append(config_content)
 
-        # TODO probably should get the last run that WORKS (ie has runtime
-        # non-negative?)
         # get the final result of the run (i.e. the last execution)
         final_result = log_data.get([*log_data.keys()][-1], None)
 
-        # TODO look into this
         # get performance trajectory
         turn_compile_trajectory, turn_correct_trajectory, turn_runtime_trajectory = (
             get_turn_trajectory_overviews(log_data, max_turns=max_turns)

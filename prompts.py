@@ -63,9 +63,9 @@ PREVIOUSLY_GENERATED_BEST_KERNEL = """Here is your previously generated kernel c
 {prev_kernel_code}
 ```\n\n"""
 
-ALL_PREVIOUSLY_GENERATED_KERNELS_HEADER = """Here are all the kernels generated so far:\n\n"""
+ALL_PREVIOUSLY_GENERATED_KERNELS_HEADER = """The following are all the kernels you generated so far.\n\n"""
 
-ALL_PREVIOUSLY_GENERATED_KERNELS_ITERATION = """Previously generated kernel at iteration {idx}:
+ALL_PREVIOUSLY_GENERATED_KERNELS_ITERATION = """Previously generated kernel at iteration {iteration}:
 
 ```python
 {kernel}

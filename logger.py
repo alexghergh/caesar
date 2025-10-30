@@ -37,12 +37,6 @@ class CaesarLogger:
 
         self.verbose = verbose
 
-        # metadata = asdict(work)
-        # metadata["run_group"] = config.run_group # TODO why do I need this?
-        # metadata["run_name"] = config.run_name # TODO why do I need this?
-        # metadata["num_rounds"] = config.max_k # TODO why do I need this?
-        # self.current_log["metadata"] = metadata
-
         # log the run config with initial params
         self._log_config(config.to_dict())
 
@@ -114,37 +108,3 @@ class CaesarLogger:
         """
         self.update_turn(turn, llm_info)
         self.save_log()
-
-
-
-
-
-
-
-    def _save_timeout_eval(self, msg: str) -> None:
-        """
-        Special case for handling eval timeouts on GPU.
-        """
-        # log self.load_log()
-        self.current_log[str(self.turn)]["eval_result"] = kernel_eval.KernelExecResult(
-                compiled=False,
-                correctness=False,
-                metadata={"timeout_error": msg,
-                          "hardware": "", # TODO: if necessary, add
-                          "device": ""
-                        }
-                )
-
-        self.save_log()
-
-    def get_turn_data(self, turn: int) -> Dict[str, str]:
-        """
-        Get the logged data for a specific turn.
-
-        Args:
-            turn: Turn number to retrieve
-
-        Returns:
-            Dictionary containing the turn's logged data
-        """
-        return self.current_log.get(turn)

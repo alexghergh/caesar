@@ -79,7 +79,7 @@ class CaesarStateMachine:
         elif os.path.exists(self.logger.log_file):
             print(
                 f"[RECOVER {self.work.problem_id}/{self.work.sample_id}] "
-                "Run was not finished, loading existing partial results from {self.logger.log_file}"
+                f"Run was not finished, loading existing partial results from {self.logger.log_file}"
             )
             self.load_from_previous_run()
 
@@ -155,7 +155,7 @@ class CaesarStateMachine:
         if self.config.verbose:
             print(
                 f"[RECOVER {self.work.problem_id}/{self.work.sample_id}] "
-                "Resuming from round {self.current_k}"
+                f"Resuming from round {self.current_k}"
             )
 
 
@@ -173,7 +173,7 @@ class CaesarStateMachine:
             if self.config.show_state:
                 print(
                     f"[STATEMACHINE {self.work.problem_id}/{self.work.sample_id}] "
-                    "Round {self.current_k}, entering state: {self.state}"
+                    f"Round {self.current_k}, entering state: {self.state}"
                 )
 
             match self.state:
@@ -308,7 +308,7 @@ class CaesarStateMachine:
                 if self.config.verbose:
                     print(
                         f"[CORRECTNESS {self.work.problem_id}/{self.work.sample_id}] "
-                        "Acquired GPU {gpu_id}"
+                        f"Acquired GPU {gpu_id}"
                     )
 
                 device = torch.device(f"cuda:{gpu_id}")

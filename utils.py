@@ -37,8 +37,8 @@ def exec_log_to_obj(saved_dict: dict) -> KernelExecResult:
         return saved_dict
 
     kernel_eval_result = KernelExecResult(
-        compiled=saved_dict.get("compiled", None),
-        correctness=saved_dict.get("correctness", None),
+        compiled=saved_dict.get("compiled", False),
+        correctness=saved_dict.get("correctness", False),
         metadata=saved_dict.get("metadata", {}),
         runtime=saved_dict.get("runtime", -1.0),
         runtime_stats=saved_dict.get("runtime_stats", {})
@@ -342,7 +342,7 @@ def build_llm_prompt_for_turn(
             # errors etc.)
             kernel_idx = best_kernel_idx
             if best_kernel_idx is None:
-                for idx, kern in kernels[::-1]:
+                for idx, kern in reversed(list(kernels.items())):
                     if kern != "":
                         kernel_idx = idx
                         break
@@ -365,7 +365,7 @@ def build_llm_prompt_for_turn(
                 for idx, kern in kernels:
                     if kern != "":
                         prompt += ALL_PREVIOUSLY_GENERATED_KERNELS_ITERATION.format(
-                            idx=idx, kernel=kern
+                            iteration=idx, kernel=kern
                         )
 
             # feedback is ALWAYS for the best kernel (whether it is the last
@@ -373,97 +373,90 @@ def build_llm_prompt_for_turn(
             # iterations are in the prompt, but the best kernel is not the last,
             # we specifically mark the feedback as being for the best kernel
             # (i.e. we specify the iteration index of the best kernel)
+
+            # offer compiler feedback if compilation failed; otherwise, move
+            # on to correctness check
             if (
-                eval_result[kernel_idx] == {}
-                and profiler_result[kernel_idx] == ""
-            ) or (
-                Strategy.COMPILER_FEEDBACK not in strategy
-                and Strategy.CORRECTNESS_FEEDBACK not in strategy
-                and Strategy.PROFILER_FEEDBACK not in strategy
+                Strategy.COMPILER_FEEDBACK in strategy
+                and eval_result[kernel_idx].metadata != {} # check whether we actually compiled
+                                                        # i.e. the state machine might've
+                                                        # never transitioned into compilation
+                and eval_result[kernel_idx].compiled is False
             ):
-                # if there's no feedback or the user asked for no feedback,
-                # re-prompt the model now
-                prompt += REFLECTION_INSTRUCTION
+                metadata = eval_result[kernel_idx].metadata
+                metadata.pop("hardware", None)
+                metadata.pop("device", None)
+                key = next(iter(metadata))
+                # if it's _not_ a best_only strategy, we need to mention for
+                # which kernel this feedback is
+                if Strategy.BEST_ONLY not in strategy:
+                    prompt += COMPILER_FEEDBACK_ITERATION_PROMPT.format(
+                        iteration=turn,
+                        compiler_feedback=f"{key}: {metadata[key]}"
+                    )
+                else:
+                    prompt += COMPILER_FEEDBACK_BEST_ONLY_PROMPT.format(
+                        compiler_feedback=f"{key}: {metadata[key]}"
+                    )
+                prompt += REFLECTION_COMPILER_FEEDBACK_INSTRUCTION
                 return prompt
 
-            else:
-                # offer compiler feedback if compilation failed; otherwise, move
-                # on to correctness check
-                if (
-                    Strategy.COMPILER_FEEDBACK in strategy
-                    and eval_result[kernel_idx] != {}
-                    and eval_result[kernel_idx].get("compiled", False) is False
-                ):
-                    metadata = eval_result[kernel_idx]["metadata"]
-                    metadata.pop("hardware", None)
-                    metadata.pop("device", None)
-                    key = next(iter(metadata))
-                    # if it's _not_ a best_only strategy, we need to mention for
-                    # which kernel this feedback is
-                    if not Strategy.BEST_ONLY:
-                        prompt += COMPILER_FEEDBACK_ITERATION_PROMPT.format(
-                            turn, f"{key}: {metadata[key]}"
-                        )
-                    else:
-                        prompt += COMPILER_FEEDBACK_BEST_ONLY_PROMPT.format(
-                            f"{key}: {metadata[key]}"
-                        )
-                    prompt += REFLECTION_COMPILER_FEEDBACK_INSTRUCTION
-                    return prompt
-
-                # this assumes that correctness check is empty if compile failed
-                # offer correctness check feedback if it failed; otherwise, move
-                # on to profiler feedback
-                if (
-                    Strategy.CORRECTNESS_FEEDBACK in strategy
-                    and eval_result[kernel_idx] != {}
-                    and eval_result[kernel_idx].get("compiled", False) is True # should always be true
-                    and eval_result[kernel_idx].get("correctness", False) is False
-                ):
-                    metadata = eval_result[kernel_idx]["metadata"]
-                    metadata.pop("hardware", None)
-                    metadata.pop("device", None)
-                    key = next(iter(metadata))
-                    # if it's _not_ a best_only strategy, we need to mention for
-                    # which kernel this feedback is
-                    if not Strategy.BEST_ONLY:
-                        prompt += CORRECTNESS_FEEDBACK_ITERATION_PROMPT.format(
-                            turn, f"{key}: {metadata[key]}"
-                        )
-                    else:
-                        prompt += CORRECTNESS_FEEDBACK_BEST_ONLY_PROMPT.format(
-                            f"{key}: {metadata[key]}"
-                        )
-                    prompt += REFLECTION_CORRECTNESS_FEEDBACK_INSTRUCTION
-                    return prompt
-
-                # this assumes that profiler data is empty if correctness check
-                # failed
-                if (
-                    Strategy.PROFILER_FEEDBACK in strategy
-                    and profiler_result[kernel_idx] != ""
-                ):
-                    # TODO should we restrict the profiler feedback output if it
-                    # gets too long? select parts of it? use the
-                    # max_profiler_feedback_length info here
-
-                    # if it's _not_ a best_only strategy, we need to mention for
-                    # which kernel this feedback is
-                    if not Strategy.BEST_ONLY:
-                        prompt += PROFILER_FEEDBACK_ITERATION_PROMPT.format(
-                            turn,
-                            profiler_result[kernel_idx][:max_profiler_feedback_length],
-                        )
-                    else:
-                        prompt += PROFILER_FEEDBACK_BEST_ONLY_PROMPT.format(
-                            profiler_result[kernel_idx][:max_profiler_feedback_length],
-                        )
-                    prompt += REFLECTION_PROFILER_FEEDBACK_INSTRUCTION
-                    return prompt
-
-                # shouldn't reach
-                assert False, "Something went wrong while creating prompt"
+            # this assumes that correctness check is empty if compile failed
+            # offer correctness check feedback if it failed; otherwise, move
+            # on to profiler feedback
+            if (
+                Strategy.CORRECTNESS_FEEDBACK in strategy
+                and eval_result[kernel_idx].metadata != {} # check whether we actually compiled
+                                                        # i.e. the state machine might've
+                                                        # never transitioned into compilation
+                and eval_result[kernel_idx].compiled is True
+                and eval_result[kernel_idx].correctness is False
+            ):
+                metadata = eval_result[kernel_idx].metadata
+                metadata.pop("hardware", None)
+                metadata.pop("device", None)
+                key = next(iter(metadata))
+                # if it's _not_ a best_only strategy, we need to mention for
+                # which kernel this feedback is
+                if Strategy.BEST_ONLY not in strategy:
+                    prompt += CORRECTNESS_FEEDBACK_ITERATION_PROMPT.format(
+                        iteration=turn,
+                        correctness_feedback=f"{key}: {metadata[key]}"
+                    )
+                else:
+                    prompt += CORRECTNESS_FEEDBACK_BEST_ONLY_PROMPT.format(
+                        correctness_feedback=f"{key}: {metadata[key]}"
+                    )
+                prompt += REFLECTION_CORRECTNESS_FEEDBACK_INSTRUCTION
                 return prompt
+
+            # this assumes that profiler data is empty if correctness check
+            # failed
+            if (
+                Strategy.PROFILER_FEEDBACK in strategy
+                and profiler_result[kernel_idx] != ""
+            ):
+                # TODO should we restrict the profiler feedback output if it
+                # gets too long? select parts of it? use the
+                # max_profiler_feedback_length info here
+
+                # if it's _not_ a best_only strategy, we need to mention for
+                # which kernel this feedback is
+                if Strategy.BEST_ONLY not in strategy:
+                    prompt += PROFILER_FEEDBACK_ITERATION_PROMPT.format(
+                        iteration=turn,
+                        profiler_feedback=profiler_result[kernel_idx][:max_profiler_feedback_length],
+                    )
+                else:
+                    prompt += PROFILER_FEEDBACK_BEST_ONLY_PROMPT.format(
+                        profiler_feedback=profiler_result[kernel_idx][:max_profiler_feedback_length],
+                    )
+                prompt += REFLECTION_PROFILER_FEEDBACK_INSTRUCTION
+                return prompt
+
+            # if no feedback is given, simply re-prompt the model as normal
+            prompt += REFLECTION_INSTRUCTION
+            return prompt
 
 
 def get_best_kernel_code(eval_result: dict) -> int | None:
@@ -479,9 +472,9 @@ def get_best_kernel_code(eval_result: dict) -> int | None:
     best_runtime = 1000000000
     best_idx = None
     for eval_idx in eval_result.keys():
-        eval = eval_result[eval_idx]
-        if eval is not None and eval["runtime"] is not None:
-            if eval["runtime"] != -1 and eval["runtime"] < best_runtime:
-                best_runtime = eval["runtime"]
+        eval: KernelExecResult = eval_result[eval_idx]
+        if eval is not None and eval.runtime is not None:
+            if eval.runtime != -1 and eval.runtime < best_runtime:
+                best_runtime = eval.runtime
                 best_idx = eval_idx
     return best_idx

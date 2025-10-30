@@ -44,32 +44,3 @@ class LLMTurnInfo:
 
         # special case default value for eval_result
         self._data["eval_result"][turn] = turn_data.get("eval_result", {})
-
-# # TODO remove if ok
-# if __name__=="__main__":
-#     lol = LLMTurnInfo()
-#     # lol.prompt = "lol" # OK
-#     lol.prompt[1] = "lol" # OK
-#     print(lol.prompt)
-#     print('turn 1', lol[1])
-#     print('turn 2', lol[2])
-#     print('turn -1', lol[-1])
-#
-#     print('pyes', lol.prompt[1])
-#     print('pyes', lol[1]['prompt'])
-#
-#     lol.update_turn_data(1, {
-#         "prompt": "huh",
-#         "eval_result": { "ney" },
-#     })
-#
-#     print(lol[2])
-#
-#     # print(",,,", lol.prompt)
-#     # lol.prompt[1] = 'lol'
-#     #
-#     # print(lol[1])
-#     #
-#     # lol[1]['prompt'] = 'haha'
-#     #
-#     # print(lol.prompt)
