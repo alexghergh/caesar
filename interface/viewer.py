@@ -627,25 +627,6 @@ def get(run_group: str, run_name: str, problem_id: str, sample_id: str):
                         ),
                         style="margin-bottom: 10px;",
                     ),
-                    Details(
-                        Summary(
-                            f"Feedback - Turn {turn}",
-                            style=(
-                                "cursor: pointer;"
-                                "padding: 10px;"
-                                "background-color: #f0f0f0;"
-                            ),
-                        ),
-                        Div(
-                            "No feedback available" if turn_data.get("feedback", "") == "" else turn_data.get("feedback"),
-                            style=(
-                                "background-color: #f8f8f8;"
-                                "border-radius: 4px;"
-                            ),
-                            cls="marked",
-                        ),
-                        style="margin-bottom: 10px;",
-                    ),
                     style=(
                         "margin-bottom: 20px;"
                         "border: 1px solid #ddd;"

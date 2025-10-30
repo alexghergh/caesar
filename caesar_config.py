@@ -1,5 +1,7 @@
 from pydra import Config, REQUIRED
 
+from strategy import Strategy
+
 
 class CaesarRunConfig(Config):
     def __init__(self):
@@ -10,7 +12,8 @@ class CaesarRunConfig(Config):
         # dataset
         self.dataset_name = "KernelBench/level1"
         self.num_samples = 1 # samples to generate per problem
-                            # essentially parallel scaling with no connections between directions for now
+                             # essentially parallel scaling with no connections
+                             # between directions for now
         self.max_k = 10 # multi-turn
 
         # LLM configs
@@ -28,7 +31,7 @@ class CaesarRunConfig(Config):
         self.max_tokens = 4096
 
         # strategy for prompting; see strategy.py
-        self.prompt_strategy = None
+        self.prompt_strategy = REQUIRED # set on CLI with e.g. prompt_strategy='["BEST_ONLY", "COMPILER_FEEDBACK"]'
 
         # cpu workers and gpus available
         # workers are number of state machines running at one time
@@ -51,6 +54,17 @@ class CaesarRunConfig(Config):
         # output verbosity
         self.verbose = False
         self.show_state = False
+
+    def finalize(self):
+        # parse strategies from the command line
+        if not isinstance(self.prompt_strategy, list):
+            raise ValueError("The 'prompt_strategy' variable should be a list of strategies")
+
+        strats = set()
+        for elem in self.prompt_strategy:
+            strats.add(Strategy[elem])
+
+        self.prompt_strategy = strats
 
     # server examples
 

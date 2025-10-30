@@ -8,9 +8,8 @@ class LLMTurnInfo:
             "prompt": {}, # dict[int, str]
             "model_response": {}, # dict[int, str]
             "kernel_code": {}, # dict[int, str]
-            "feedback": {}, # dict[int, str]
-            "eval_result": {}, # dict[int, dict] - external feedback (e.g. compile, prof)
-            "profiler_result": {} # dict[int, str]
+            "eval_result": {}, # dict[int, dict] - compile / runtime feedback
+            "profiler_result": {} # dict[int, str] - profiler feedback
         }
 
     def __getattr__(self, name: str):

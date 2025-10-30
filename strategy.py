@@ -6,6 +6,13 @@ from enum import Enum
 # if BEST_ONLY in strategy:
 #   # do something
 class Strategy(Enum):
+    # whether to include CUDA syntax example in the prompt
+    SHOW_INLINE_SYNTAX = "show_inline_cuda_syntax"
+
+    # TODO CoT/ICL examples of progressive optimization
+    # TODO summaries of previous rounds / compiler feedback etc.
+    # TODO RAG
+
     # whether to only include the best generated kernel so far in the prompt,
     # or include all the kernels generated so far
     BEST_ONLY = "use_best_kernel_only"

@@ -7,6 +7,27 @@ from typing import List
 from KernelBenchInternal.utils import read_file
 from KernelBenchInternal.eval import KernelExecResult
 
+from prompts import (
+    ALL_PREVIOUSLY_GENERATED_KERNELS_HEADER,
+    ALL_PREVIOUSLY_GENERATED_KERNELS_ITERATION,
+    COMPILER_FEEDBACK_BEST_ONLY_PROMPT,
+    COMPILER_FEEDBACK_ITERATION_PROMPT,
+    CORRECTNESS_FEEDBACK_BEST_ONLY_PROMPT,
+    CORRECTNESS_FEEDBACK_ITERATION_PROMPT,
+    EXAMPLE_CUDA_INLINE_SYNTAX,
+    INITIAL_TASK_DESCRIPTION,
+    INITIAL_INSTRUCTION,
+    KERNEL_TO_OPTIMIZE,
+    PREVIOUSLY_GENERATED_BEST_KERNEL,
+    PROFILER_FEEDBACK_BEST_ONLY_PROMPT,
+    PROFILER_FEEDBACK_ITERATION_PROMPT,
+    REFLECTION_COMPILER_FEEDBACK_INSTRUCTION,
+    REFLECTION_CORRECTNESS_FEEDBACK_INSTRUCTION,
+    REFLECTION_INSTRUCTION,
+    REFLECTION_PROFILER_FEEDBACK_INSTRUCTION
+)
+from strategy import Strategy
+
 
 def exec_log_to_obj(saved_dict: dict) -> KernelExecResult:
     """
@@ -228,18 +249,9 @@ def fetch_baseline_time_by_problem_id(
     assert False, f"Problem {problem_id} not found in baseline time file."
 
 
-
-
-
-
-
-
-
 ###########################
-# Prompt Construction
-
-
-
+# Prompt construction
+###########################
 
 REPO_TOP_PATH = os.path.abspath(
     os.path.join(
@@ -249,27 +261,22 @@ REPO_TOP_PATH = os.path.abspath(
 )
 
 KERNEL_BENCH_PATH = os.path.join(REPO_TOP_PATH, "KernelBench", "KernelBench")
-KERNEL_BENCH_ARCH_EXAMPLES_PATH = os.path.join(REPO_TOP_PATH, "KernelBench", "KernelBenchInternal", "prompts")
+KERNEL_BENCH_ARCH_EXAMPLES_PATH = os.path.join(
+    REPO_TOP_PATH, "KernelBench", "KernelBenchInternal", "prompts"
+)
 
 
-# These are from KernelBenchInternal/src/prompt_constructor.py
-# overall problem state
-PROBLEM_STATEMENT = """You write custom CUDA kernels to replace the pytorch operators in the given architecture to get speedups.\n\nYou have complete freedom to choose the set of operators you want to replace. You may make the decision to replace some operators with custom CUDA kernels and leave others unchanged. You may replace multiple operators with custom implementations, consider operator fusion opportunities (combining multiple operators into a single kernel, for example, combining matmul+relu), or algorithmic changes (such as online softmax). You are only limited by your imagination.\n
-"""
+def generate_initial_prompt(
+        ref_arch_src: str, strategy: set[Strategy]
+) -> str:
+    """
+    Construct an initial template prompt to show to the model.
+    Additionally, it contains an example implementation of a custom CUDA kernel
+    in PyTorch.
+    """
 
-PROBLEM_INSTRUCTION = """Optimize the architecture named Model with custom CUDA operators! Name your optimized output architecture ModelNew. Output the new code in codeblocks. Please generate real code, NOT pseudocode, make sure the code compiles and is fully functional. Just output the new model code, no other text, and NO testing code! \n
-"""
-
-REFLECTION_INSTRUCTION = """Given your previous generation(s), improve and optimize the architecture named Model with custom CUDA operators! Name your optimized output architecture ModelNew. Output the new code in codeblocks. Please generate real code, NOT pseudocode, make sure the code compiles and is fully functional. Just output the new model code, no other text, and NO testing code! \n
-"""
-
-REFLECTION_INSTRUCTION_LAST_ONLY = """Given your latest generation, improve and optimize the architecture named Model with custom CUDA operators! Name your optimized output architecture ModelNew. Output the new code in codeblocks. Please generate real code, NOT pseudocode, make sure the code compiles and is fully functional. Just output the new model code, no other text, and NO testing code! \n
-"""
-
-
-
-def prompt_generate_initial_from_template(ref_arch_src: str):
-    example_ind = 1
+    # example kernel to show syntax (addition kernel)
+    example_ind = 'add'
     example_arch_path = os.path.join(
         KERNEL_BENCH_ARCH_EXAMPLES_PATH, f"model_ex_{example_ind}.py"
     )
@@ -279,197 +286,202 @@ def prompt_generate_initial_from_template(ref_arch_src: str):
     example_arch = read_file(example_arch_path)
     example_new_arch = read_file(example_new_arch_path)
 
-    return prompt_generate_initial(ref_arch_src, example_arch, example_new_arch)
+    # construct the initial prompt
+    prompt = INITIAL_TASK_DESCRIPTION
 
-def prompt_generate_initial(arch_src: str, example_arch_src: str, example_new_arch_src: str
-) -> str:
-    prompt = PROBLEM_STATEMENT
+    if Strategy.SHOW_INLINE_SYNTAX in strategy:
+        prompt += EXAMPLE_CUDA_INLINE_SYNTAX.format(
+            example_arch_src=example_arch, example_new_arch_src=example_new_arch
+        )
 
-    if example_arch_src != "" and example_new_arch_src != "":
-        prompt += f"""
-        Here's an example to show you the syntax of inline embedding custom CUDA operators in torch: The example given architecture is: \n
-        ``` \n
-        {example_arch_src}
-        ``` \n
-        The example new arch with custom CUDA kernels looks like this:
-        ```
-        {example_new_arch_src}
-        ``` \n
-        """
+    prompt += KERNEL_TO_OPTIMIZE.format(arch_src=ref_arch_src)
 
-    prompt += f"""
-    You are given the following architecture: \n
-    ```
-    {arch_src}
-    ```
-    """
-    # prompt += PROBLEM_INSTRUCTION
     return prompt
 
 
-
-
-def build_context_multi_turn(
-        initial_prompt: str,
-        prompts: dict,
-        kernels: dict,
-        compiler_feedback: dict,
-        eval_result: dict,
-        profiler_result: dict,
-        iteration: int,
-        strategy: List[str] = [],
-        use_last_only: bool = False,
-        max_feedback_length: int = 4000,
-    ) -> str:
+def build_llm_prompt_for_turn(
+    turn: int,
+    ref_arch_src: str,
+    kernels: dict,
+    eval_result: dict,
+    profiler_result: dict,
+    strategy: set[Strategy],
+    max_profiler_feedback_length: int,
+) -> str:
     """
-    Build the current context for the given iteration and strategy
+    Build the current context for the given turn / round. This takes into
+    account all the information from the previous steps.
     """
-    # TODO rebuild this function
-    prompt = initial_prompt
+    # initial prompt (always start from the task description + reference kernel
+    # to optimize)
+    prompt = generate_initial_prompt(ref_arch_src, strategy)
 
-    # Add feedback
-    if "eval_result" in strategy:
-        if iteration == 1:
-            prompt += "\n\n"
-            prompt += PROBLEM_INSTRUCTION
-        else:
-            prompt += f"Here is your latest generation:\n"
-            prompt += f"```\n{kernels[iteration - 1]}\n```\n"
-            prompt += construct_programatic_prompt_feedback(compiler_feedback=compiler_feedback[iteration - 1],
-                                                            exec_result=eval_result[iteration - 1],
-                                                            profiler_feedback = profiler_result[iteration - 1] if iteration - 1 in profiler_result else "",
-                                                            max_feedback_length=max_feedback_length,
-                                                            use_pytorch_profiler=("profiler" in strategy)
-                                                            )
+    if turn == 1:
+        prompt += INITIAL_INSTRUCTION
         return prompt
 
-    # Reflection
-    # Iterations are 1-indexed.
-    for i in range(1, iteration, 1):
-
-        # Add what you generated
-        if "reflection" in strategy:
-
-            # Only use the latest generation
-            if use_last_only:
-                if i < iteration - 1: continue
-                else:
-                    prompt += f"Here is your latest generation:\n"
-                    prompt += f"```\n{kernels[i]}\n```\n"
-            else:
-                # Include all previous generations
-
-                # Special case for the first generation
-                if i == 1:
-                    prompt += f"Here are your previous generations:\n"
-
-                # add kernels
-                if i in kernels:
-                    prompt += f"Generation {i}:\n```\n{kernels[i]}\n```\n\n"
-
-        # Human feedback
-        if "human_feedback" in strategy:
-            print(f"\nPlease provide feedback for kernel {i}:")
-            user_feedback = input().strip()
-            if user_feedback:
-                prompt += f"This is expert human feedback on your previously generated kernel #{i}:\n"
-                prompt += f"{user_feedback}\n\n"
-
-    # Instruction prompt
-    if iteration == 1: # for intial
-        prompt += PROBLEM_INSTRUCTION
     else:
-        if "reflection" in strategy:
-            if use_last_only:
-                prompt += REFLECTION_INSTRUCTION_LAST_ONLY
-            else:
-                prompt += REFLECTION_INSTRUCTION
+
+        # check whether we have any kernels generated so far
+        if kernels is None or all(not v for v in kernels.values()):
+            # don't have a valid kernel code so far, so re-prompt using the
+            # initial prompt
+            prompt += INITIAL_INSTRUCTION
+            return prompt
+
         else:
-            raise NotImplementedError("Anything else is not implemented yet")
-            prompt += PROBLEM_INSTRUCTION
 
-    return prompt
+            # best kernel so far in terms of runtime (the above `if` branch
+            # checks whether we do have a kernel; this means we have kernel
+            # code; however, it doesn't mean it compiled or ran correctly!
+            # that's why this can return None)
+            best_kernel_idx: int | None = get_best_kernel_code(eval_result)
 
-EVAL_RESULT_INSTRUCTION_LAST_ONLY = """Name your new improved output architecture ModelNew. Output the new code in codeblocks. Please generate real code, NOT pseudocode, make sure the code compiles and is fully functional. Just output the new model code, no other text, and NO testing code! \n
-"""
+            # if we don't have a _best_ kernel, we might still have some kernel
+            # code to give the LLM feedback on (e.g. compile errors, runtime
+            # errors etc.)
+            kernel_idx = best_kernel_idx
+            if best_kernel_idx is None:
+                for idx, kern in kernels[::-1]:
+                    if kern != "":
+                        kernel_idx = idx
+                        break
 
-def construct_programatic_prompt_feedback(compiler_feedback: str,
-                                          exec_result: KernelExecResult,
-                                          profiler_feedback: str = "",
-                                          max_feedback_length: int = 2000,
-                                          use_pytorch_profiler: bool = False) -> str:
+            # TODO make sure that kernel_idx is guaranteed at this point to be a
+            # valid index to kernel code
+
+            # NOTE: running with best_only will likely generate the same LLM
+            # prompt for multiple turns, if the LLM fails to improve the code;
+            # with temperature 0, the state machine will likely get stuck
+            # forever with the same LLM output!!!
+            if Strategy.BEST_ONLY in strategy:
+                prompt += PREVIOUSLY_GENERATED_BEST_KERNEL.format(
+                    prev_kernel_code=kernels[kernel_idx]
+                )
+            else:
+                # use all previous kernel generations
+                # ignore turns where kernels are empty
+                prompt += ALL_PREVIOUSLY_GENERATED_KERNELS_HEADER
+                for idx, kern in kernels:
+                    if kern != "":
+                        prompt += ALL_PREVIOUSLY_GENERATED_KERNELS_ITERATION.format(
+                            idx=idx, kernel=kern
+                        )
+
+            # feedback is ALWAYS for the best kernel (whether it is the last
+            # generated kernel or not); in the special case that multiple
+            # iterations are in the prompt, but the best kernel is not the last,
+            # we specifically mark the feedback as being for the best kernel
+            # (i.e. we specify the iteration index of the best kernel)
+            if (
+                eval_result[kernel_idx] == {}
+                and profiler_result[kernel_idx] == ""
+            ) or (
+                Strategy.COMPILER_FEEDBACK not in strategy
+                and Strategy.CORRECTNESS_FEEDBACK not in strategy
+                and Strategy.PROFILER_FEEDBACK not in strategy
+            ):
+                # if there's no feedback or the user asked for no feedback,
+                # re-prompt the model now
+                prompt += REFLECTION_INSTRUCTION
+                return prompt
+
+            else:
+                # offer compiler feedback if compilation failed; otherwise, move
+                # on to correctness check
+                if (
+                    Strategy.COMPILER_FEEDBACK in strategy
+                    and eval_result[kernel_idx] != {}
+                    and eval_result[kernel_idx].get("compiled", False) is False
+                ):
+                    metadata = eval_result[kernel_idx]["metadata"]
+                    metadata.pop("hardware", None)
+                    metadata.pop("device", None)
+                    key = next(iter(metadata))
+                    # if it's _not_ a best_only strategy, we need to mention for
+                    # which kernel this feedback is
+                    if not Strategy.BEST_ONLY:
+                        prompt += COMPILER_FEEDBACK_ITERATION_PROMPT.format(
+                            turn, f"{key}: {metadata[key]}"
+                        )
+                    else:
+                        prompt += COMPILER_FEEDBACK_BEST_ONLY_PROMPT.format(
+                            f"{key}: {metadata[key]}"
+                        )
+                    prompt += REFLECTION_COMPILER_FEEDBACK_INSTRUCTION
+                    return prompt
+
+                # this assumes that correctness check is empty if compile failed
+                # offer correctness check feedback if it failed; otherwise, move
+                # on to profiler feedback
+                if (
+                    Strategy.CORRECTNESS_FEEDBACK in strategy
+                    and eval_result[kernel_idx] != {}
+                    and eval_result[kernel_idx].get("compiled", False) is True # should always be true
+                    and eval_result[kernel_idx].get("correctness", False) is False
+                ):
+                    metadata = eval_result[kernel_idx]["metadata"]
+                    metadata.pop("hardware", None)
+                    metadata.pop("device", None)
+                    key = next(iter(metadata))
+                    # if it's _not_ a best_only strategy, we need to mention for
+                    # which kernel this feedback is
+                    if not Strategy.BEST_ONLY:
+                        prompt += CORRECTNESS_FEEDBACK_ITERATION_PROMPT.format(
+                            turn, f"{key}: {metadata[key]}"
+                        )
+                    else:
+                        prompt += CORRECTNESS_FEEDBACK_BEST_ONLY_PROMPT.format(
+                            f"{key}: {metadata[key]}"
+                        )
+                    prompt += REFLECTION_CORRECTNESS_FEEDBACK_INSTRUCTION
+                    return prompt
+
+                # this assumes that profiler data is empty if correctness check
+                # failed
+                if (
+                    Strategy.PROFILER_FEEDBACK in strategy
+                    and profiler_result[kernel_idx] != ""
+                ):
+                    # TODO should we restrict the profiler feedback output if it
+                    # gets too long? select parts of it? use the
+                    # max_profiler_feedback_length info here
+
+                    # if it's _not_ a best_only strategy, we need to mention for
+                    # which kernel this feedback is
+                    if not Strategy.BEST_ONLY:
+                        prompt += PROFILER_FEEDBACK_ITERATION_PROMPT.format(
+                            turn,
+                            profiler_result[kernel_idx][:max_profiler_feedback_length],
+                        )
+                    else:
+                        prompt += PROFILER_FEEDBACK_BEST_ONLY_PROMPT.format(
+                            profiler_result[kernel_idx][:max_profiler_feedback_length],
+                        )
+                    prompt += REFLECTION_PROFILER_FEEDBACK_INSTRUCTION
+                    return prompt
+
+                # shouldn't reach
+                assert False, "Something went wrong while creating prompt"
+                return prompt
+
+
+def get_best_kernel_code(eval_result: dict) -> int | None:
     """
-    Construct programatic feedback from the given exec_result
-    input:
-    - compiler_feedback: str, feedback from the compiler
-    - exec_result: KernelExecResult, the result of the execution
-    - profiler_feedback: str, table breakdown from the PyTorch profiler; only used if use_pytorch_profiler is True
-    - max_log_length: int, the maximum length of the log to put back into context
-    - use_pytorch_profiler: bool, whether to use the PyTorch profiler
+    Given the runtime stats of the current runs, returns the best executing
+    kernel index in terms of its runtime.
+
+    If no such kernel exists, returns None.
+
+    *Note*: The index returned assumes the ordering of the eval_result
+    dictionary is the same as the kernel code dictionary.
     """
-    feedback = "Your generated architecture ModelNew and kernel was evaluated on GPU and checked against the reference architecture Model. \n\n"
-    feedback += "Here is the Evaluation Result: \n"
-
-    # we do not want hardware information to influence this
-    metadata_without_hw_info = exec_result.metadata
-    metadata_without_hw_info.pop('hardware', None)
-    metadata_without_hw_info.pop('device', None)
-
-    # Case 1: Compilation Failure
-    if not exec_result.compiled:
-        feedback += "Your kernel failed to compile.\n\n"
-        # TODO: restrict length of compiler feedback
-        feedback += f"Here is the compiler logs\n\n:"
-        feedback += f"{compiler_feedback[:max_feedback_length]}\n\n"
-        for key, value in metadata_without_hw_info.items():
-            feedback += f"{key}: {value}\n"
-        feedback += EVAL_RESULT_INSTRUCTION_LAST_ONLY
-        feedback += "Please fix the errors and try again.   "
-        return feedback
-
-    # Special Case: CUDA Error
-    if "cuda_error" in metadata_without_hw_info:
-        feedback += "Your kernel failed to run. \n\n"
-        feedback += f"Here is the CUDA error: {exec_result.metadata['cuda_error']} \n\n"
-        feedback += EVAL_RESULT_INSTRUCTION_LAST_ONLY
-
-        feedback += "Please fix the errors and try again."
-        return feedback
-
-    # Special Case: Time-out
-    if "timeout_error" in metadata_without_hw_info:
-        feedback += "Your kernel execution timed out. \n\n"
-        feedback += EVAL_RESULT_INSTRUCTION_LAST_ONLY
-        feedback += "Please fix the errors and try again."
-
-        return feedback
-
-    # Case 2: Compiled, But not Correct
-    if not exec_result.correctness:
-        feedback += "Your kernel failed to produce the correct output, compared to the reference architecture.\n\n"
-        feedback += f"Here is the correctness feedback: \n\n"
-        # add metadata objects
-        for key, value in metadata_without_hw_info.items():
-            feedback += f"{key}: {value}\n"
-        feedback += EVAL_RESULT_INSTRUCTION_LAST_ONLY
-        feedback += "Please try generating ModelNew again, while fixing the correctness issues."
-        return feedback
-
-    # Case 3: Runtime Success
-    if exec_result.correctness:
-        feedback += "Your kernel executed successfully and produced the correct output. \n\n"
-        feedback += f"Here is your wall clock time: {exec_result.runtime} milliseconds \n\n"
-
-        # ADD PROFILER
-        if use_pytorch_profiler:
-            assert len(profiler_feedback) > 0, "Profiler feedback is empty"
-            feedback += f"Your Kernel was profiled with the PyTorch Profiler over many iterations, below is a table breakdown of the CUDA kernel execution time: \n\n"
-
-            feedback += f"```\n{profiler_feedback[:max_feedback_length]}\n```\n\n"
-
-        feedback += EVAL_RESULT_INSTRUCTION_LAST_ONLY
-        feedback += "Please rewrite the entire kernel to be as fast as possible. \n\n"
-        return feedback
-
-    raise ValueError("[Programatic Feedback] You should not reach here")
-    return None
+    best_runtime = 1000000000
+    best_idx = None
+    for eval_idx in eval_result.keys():
+        eval = eval_result[eval_idx]
+        if eval is not None and eval["runtime"] is not None:
+            if eval["runtime"] != -1 and eval["runtime"] < best_runtime:
+                best_runtime = eval["runtime"]
+                best_idx = eval_idx
+    return best_idx

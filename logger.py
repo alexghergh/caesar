@@ -88,7 +88,6 @@ class CaesarLogger:
                 "prompt": "",
                 "model_response": "",
                 "kernel_code": "",
-                "feedback": "",
                 "eval_result": {},
                 "profiler_result": "",
             }
@@ -99,8 +98,6 @@ class CaesarLogger:
             self.current_log[turn]["model_response"] = llm_info.model_response[turn]
         if llm_info.kernel_code.get(turn, None):
             self.current_log[turn]["kernel_code"] = llm_info.kernel_code[turn]
-        if llm_info.feedback.get(turn, None):
-            self.current_log[turn]["feedback"] = llm_info.feedback[turn]
         if llm_info.eval_result.get(turn, None):
             self.current_log[turn]["eval_result"] = llm_info.eval_result[turn]
         if llm_info.profiler_result.get(turn, None):
@@ -113,8 +110,7 @@ class CaesarLogger:
         Args:
             turn: Turn number to log.
             llm_info: Contains the LLM turn information, such as prompt,
-                model_response, kernel_code, feedback, eval_result,
-                profiler_result.
+                model_response, kernel_code, eval_result, profiler_result.
         """
         self.update_turn(turn, llm_info)
         self.save_log()

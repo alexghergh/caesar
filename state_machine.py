@@ -19,10 +19,7 @@ from eval import (
 from states import CaesarState, StateOutcome
 from work import WorkArgs
 from logger import CaesarLogger
-from utils import (
-    build_context_multi_turn,
-    prompt_generate_initial_from_template,
-)
+from utils import build_llm_prompt_for_turn
 from orchestrator import GPUOrchestrator
 from transition import Transition
 from caesar_config import CaesarRunConfig
@@ -63,7 +60,7 @@ class CaesarStateMachine:
         self.logger = logger
 
         # LLM state information (all turns)
-        self.curr_context: str = "" # current context (built out of all the info from llm_info)
+        self.curr_prompt: str = "" # current context (built out of all the info from llm_info)
         self.llm_info = LLMTurnInfo()
 
         # timeout stuff
@@ -126,7 +123,6 @@ class CaesarStateMachine:
                 "prompt": turn_data.get("prompt", ""),
                 "model_response": turn_data.get("model_response", ""),
                 "kernel_code": turn_data.get("kernel_code", ""),
-                "feedback": turn_data.get("feedback", ""),
                 "eval_result": turn_data.get("eval_result", {}),
                 "profiler_result": turn_data.get("profiler_result", ""),
             })
@@ -136,7 +132,7 @@ class CaesarStateMachine:
             if (
                 self.llm_info.prompt[turn] == ""
                 or self.llm_info.model_response[turn] == ""
-                or (self.llm_info.kernel_code[turn] == "" and self.llm_info.feedback[turn] == "")
+                or self.llm_info.kernel_code[turn] == ""
             ):
                 self.current_k = turn
                 break
@@ -208,27 +204,17 @@ class CaesarStateMachine:
         maximum number of turns allowed, keep looping.
         """
 
-        # initial round prompt
-        # TODO replace this with an enum easily accessible through configs
-        # the enum is simply INIT_PROMPT_STRATEGY: function_name,
-        # then later access through init_prompt_strategy(ref_problem)
-        self.initial_prompt = prompt_generate_initial_from_template(self.ref_problem_src)
-
-        # TODO prompt
-        # update current context
-        self.curr_context = build_context_multi_turn(
-            initial_prompt=self.initial_prompt,
-            prompts=self.llm_info.prompt,
+        # initialize this round's prompt with the information so far
+        self.curr_prompt = build_llm_prompt_for_turn(
+            turn=self.current_k,
+            ref_arch_src=self.ref_problem_src,
             kernels=self.llm_info.kernel_code,
-            compiler_feedback=self.llm_info.feedback,
             eval_result=self.llm_info.eval_result,
             profiler_result=self.llm_info.profiler_result,
-            iteration=self.current_k,
-            strategy=["reflection"], #self.config.context_strategy,
-            use_last_only=self.config.use_last_only,
-            max_feedback_length=2000, # TODO this is in characters; how big can traces actually get? #self.config.max_feedback_length,
+            strategy=self.config.prompt_strategy,
+            max_profiler_feedback_length=2000, # TODO this is in characters; how big can traces actually get? #self.config.max_feedback_length,
         )
-        self.llm_info.prompt[self.current_k] = self.curr_context
+        self.llm_info.prompt[self.current_k] = self.curr_prompt
 
         self.outcome = StateOutcome.Start
 
@@ -239,7 +225,7 @@ class CaesarStateMachine:
         """
         # query LLM
         model_response = query_server(
-            self.curr_context,
+            self.curr_prompt,
             model_name=self.config.model_name,
             temperature=(
                 0.0 if self.config.greedy_sample else self.config.temperature
@@ -286,10 +272,7 @@ class CaesarStateMachine:
             print(f"[COMPILE {self.work.problem_id}/{self.work.sample_id}] Compile stdout: {stdout}")
             print(f"[COMPILE {self.work.problem_id}/{self.work.sample_id}] Compile stderr: {err}")
 
-        compiler_feedback = None
         if returncode == 0:
-            self.llm_info.feedback[self.current_k] = ""
-
             # write partial eval result here, since compilation succeeded
             # we'll write more later if doing correctness check
             self.llm_info.eval_result[self.current_k] = kernel_eval.KernelExecResult(
@@ -301,15 +284,12 @@ class CaesarStateMachine:
             )
             self.outcome = StateOutcome.CompileSuccess
         else:
-            compiler_feedback = f"Compilation failed.\nstdout: {stdout}\nstderr: {err}"
-            self.llm_info.feedback[self.current_k] = compiler_feedback
-
             # register compilation failure as eval result
             self.llm_info.eval_result[self.current_k] = kernel_eval.KernelExecResult(
                 compiled=False,
                 correctness=False,
                 metadata={
-                    "compiler_error": compiler_feedback,
+                    "compiler_error": f"Compilation failed.\nstdout: {stdout}\nstderr: {err}",
                     "hardware": "cpu",
                     "device": "cpu"
                 }
