@@ -434,7 +434,7 @@ def build_llm_prompt_for_turn(
             # failed
             if (
                 Strategy.PROFILER_FEEDBACK in strategy
-                and profiler_result[kernel_idx] != ""
+                and profiler_result.get(kernel_idx, "") != ""
             ):
                 # TODO should we restrict the profiler feedback output if it
                 # gets too long? select parts of it? use the
