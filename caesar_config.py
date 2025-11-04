@@ -35,7 +35,9 @@ class CaesarRunConfig(Config):
 
         # cpu workers and gpus available
         # workers are number of state machines running at one time
-        # set workers to 4x the number of GPU workers or slightly higher
+        # set workers to 4x the number of GPU workers or slightly higher; note
+        # however that every worker will initialize its own GPU torch context
+        # (around 600-700 MB per process), so don't go overboard with this
         self.num_workers = 1
         self.num_gpus = 1
 

@@ -113,7 +113,7 @@ def launch_worker_process(
             work = proc_queue.get(block=True, timeout=1) # timeout means empty queue
 
             if config.verbose:
-                print(f"CPU worker {os.getpid()} starting work {work}")
+                print(f"CPU worker {os.getname()} starting work {work}")
 
             # create and launch process
             work_proc = mp.Process(
@@ -151,6 +151,7 @@ def main(config: CaesarRunConfig):
     # - CoT/ICL examples of progressive optimization
     # - summaries of previous rounds / compiler feedback etc.
     # - RAG
+    # eval_kernel_against_ref doesn't seem to correctly clear GPU cache
 
     if config.verbose:
         print("Running with config: ", config)
