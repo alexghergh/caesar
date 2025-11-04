@@ -1,5 +1,6 @@
 import os
 import torch
+import multiprocessing as mp
 
 from torch.profiler import profile, ProfilerActivity
 
@@ -48,7 +49,7 @@ def evaluate_single_sample_src(ref_arch_src: str,
                                kernel_src: str,
                                configs: CaesarRunConfig,
                                build_dir: str,
-                               device: torch.device,
+                               gpu_id: int,
                                timeout_seconds: int = 480,
                                ) -> kernel_eval.KernelExecResult:
     """
@@ -57,6 +58,9 @@ def evaluate_single_sample_src(ref_arch_src: str,
     """
     kernel_hash = get_kernel_hash(kernel_src)
     build_dir = os.path.join(build_dir, kernel_hash)
+
+    import torch
+    device = torch.device(f"cuda:{gpu_id}")
 
     try:
         with Timeout(timeout_seconds):
@@ -111,46 +115,53 @@ def evaluate_single_sample_src(ref_arch_src: str,
             return eval_result
 
 
-
-
+def evaluate_single_sample_src_mp(ref_arch_src: str,
+                                  kernel_src: str,
+                                  configs: CaesarRunConfig,
+                                  build_dir: str,
+                                  gpu_id: int,
+                                  timeout_seconds: int,
+                                  result_queue: mp.Queue) -> None:
+    """
+    Same as `evaluate_single_sample_src`, but meant to be called in a
+    multiprocessing context. Instead of returning the result, it puts it in a
+    queue passed as parameter.
+    """
+    result_queue.put(evaluate_single_sample_src(ref_arch_src,
+                                                kernel_src,
+                                                configs,
+                                                build_dir,
+                                                gpu_id,
+                                                timeout_seconds))
 
 
 def get_torch_profiler_info(ref_arch_src: str,
                             kernel_src: str,
                             build_dir: str,
-                            device: torch.device,
+                            gpu_id: int,
                             num_trials: int = 100,
                             table_row_limit: int = 10,
                             seed_num: int = 42) -> str:
     """
-    Get the profiler info for a particular kernel
-    Given a KernelBench solution to a problem, we want to profile the kernel
-
-    ref_arch_src: str, the source code of the reference architecture; we use this to get the inputs
-    kernel_src: str, the source code of the kernel; this will be compiled and used to get the model
-    build_dir: str, the directory to build the custom kernel
-    device: torch.device, the device to run the profiler on
-    num_trials: int, the number of trials to run for Torch profiling
-    table_row_limit: int, the number of rows to display in the profiler table
-    seed_num: int to initiliaze on device random seed
-
+    Get the profiler info for a particular kernel.
 
     Notes about profiling:
         - We do not set p.toggle_collection_dynamic explicitly,
-        - We only collect CUDA activity (ProfilerActivity.CUDA), as we are only interested in the kernel
-
+        - We only collect CUDA activity (ProfilerActivity.CUDA), as we are only
+          interested in the kernel.
     """
-    assert torch.cuda.is_available(), "CUDA is not available, cannot run Torch Profiler"
-
     kernel_hash = get_kernel_hash(kernel_src)
     build_dir = os.path.join(build_dir, kernel_hash)
 
+    # get the inputs and problem size
     context = {}
     _, get_init_inputs, get_inputs = kernel_eval.load_original_model_and_inputs(
         ref_arch_src, context
     )
 
+    device = torch.device(f"cuda:{gpu_id}")
     kernel_eval.set_seed(seed_num)
+
     inputs = get_inputs()
     init_inputs = get_init_inputs()
     inputs = [
@@ -162,14 +173,12 @@ def get_torch_profiler_info(ref_arch_src: str,
         for x in init_inputs
     ]
 
+    # construct the model to profile
     ModelNew = kernel_eval.load_custom_model(kernel_src, context, build_dir)
-    # construct the new model with init inputs
     model = ModelNew(*init_inputs)
-    assert hasattr(model, "forward")
     torch.cuda.synchronize(device=device)
 
     model = model.cuda(device=device)
-
 
     with torch.no_grad():
         profiling_scheduler = torch.profiler.schedule(
@@ -184,11 +193,24 @@ def get_torch_profiler_info(ref_arch_src: str,
             schedule=profiling_scheduler,
         ) as prof:
             for _ in range(num_trials):
-
-                output = model(*inputs)
+                _ = model(*inputs)
                 prof.step()
 
         profiler_output = prof.key_averages().table(sort_by='cuda_time_total',
                                                     row_limit=table_row_limit)
-
     return profiler_output
+
+
+def get_torch_profiler_info_mp(ref_arch_src: str,
+                               kernel_src: str,
+                               build_dir: str,
+                               gpu_id: int,
+                               result_queue: mp.Queue) -> None:
+    """
+    Same as `get_torch_profiler_info`, but meant to be called in a
+    multiprocessing context. It puts the result in a queue instead of returning.
+    """
+    result_queue.put(get_torch_profiler_info(ref_arch_src,
+                                             kernel_src,
+                                             build_dir,
+                                             gpu_id))

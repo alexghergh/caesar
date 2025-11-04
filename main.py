@@ -113,7 +113,7 @@ def launch_worker_process(
             work = proc_queue.get(block=True, timeout=1) # timeout means empty queue
 
             if config.verbose:
-                print(f"CPU worker {os.getname()} starting work {work}")
+                print(f"CPU worker {os.getpid()} starting work {work}")
 
             # create and launch process
             work_proc = mp.Process(
