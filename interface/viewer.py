@@ -32,6 +32,8 @@ from utils import (
     fetch_baseline_time_by_problem_id,
 )
 
+# timing result to compare against
+TIMING_BASELINE = "H100_tsubame"
 
 BASE_LOG_DIR = os.path.join(ROOT_DIR, "caesar_log_dir") # path to logs
 
@@ -213,8 +215,6 @@ def get(run_group: str, run_name: str, problem_id: str, sample_id: str):
         return ui_elements
 
     try:
-
-
         log_path = os.path.join(sample_base_dir, "log.json")
         config_path = os.path.join(sample_base_dir, "config.json")
 
@@ -228,14 +228,17 @@ def get(run_group: str, run_name: str, problem_id: str, sample_id: str):
         )
         problems = dataset.get_problem_ids()
 
-        # TODO properly make this function into a kernelbench eval.py function,
-        # so we don't depend on a relative path here
         # fetch timing baselines
-        baseline_time_filepath = (
-            "../KernelBench/results/timing/H100_tsubame/baseline_time_torch.json"
+        KERNEL_BENCH_TIMING_RESULTS_PATH = os.path.join(
+            "..", "KernelBench", "results", "timing", TIMING_BASELINE
         )
-        baseline_torch_compile_time_filepath = (
-            "../KernelBench/results/timing/H100_tsubame/baseline_time_torch_compile_inductor_default.json"
+        baseline_time_filepath = os.path.join(
+            KERNEL_BENCH_TIMING_RESULTS_PATH,
+            "baseline_time_torch.json"
+        )
+        baseline_torch_compile_time_filepath = os.path.join(
+            KERNEL_BENCH_TIMING_RESULTS_PATH,
+            "baseline_time_torch_compile_inductor_default.json"
         )
 
         level = int(re.search(r"\d+", config_data["dataset_name"]).group())
@@ -313,8 +316,7 @@ def get(run_group: str, run_name: str, problem_id: str, sample_id: str):
         # plot the information using plotly
         plot_title = f"Runtime Trajectory for {run_name} - Problem {problem_id} - Sample {sample_id}"
 
-        # BUG: this plot label axes are off! WHY?
-        # Create plotly data for runtime trajectory
+        # create plotly data for runtime trajectory
         runtime_plot_data = Div(
             H2("Runtime Trajectory Plot", style="margin-top: 0; margin-bottom: 10px;"),
             Div(id="runtime-plot"),
@@ -559,7 +561,7 @@ def get(run_group: str, run_name: str, problem_id: str, sample_id: str):
                     ),
                     Details(
                         Summary(
-                            f"Context - Turn {turn}",
+                            f"Prompt - Turn {turn}",
                             style=(
                                 "cursor: pointer;"
                                 "padding: 10px;"
@@ -569,6 +571,28 @@ def get(run_group: str, run_name: str, problem_id: str, sample_id: str):
                         Pre(
                             Code(
                                 turn_data["prompt"],
+                                style=(
+                                    "white-space: pre-wrap;"
+                                    "background-color: #f8f8f8;"
+                                    "padding: 10px;"
+                                    "border-radius: 4px;"
+                                ),
+                            )
+                        ),
+                        style="margin-bottom: 10px;",
+                    ),
+                    Details(
+                        Summary(
+                            f"Full model response - Turn {turn}",
+                            style=(
+                                "cursor: pointer;"
+                                "padding: 10px;"
+                                "background-color: #f0f0f0;"
+                            ),
+                        ),
+                        Pre(
+                            Code(
+                                turn_data["model_response"],
                                 style=(
                                     "white-space: pre-wrap;"
                                     "background-color: #f8f8f8;"
@@ -633,7 +657,7 @@ def get(run_group: str, run_name: str, problem_id: str, sample_id: str):
             except Exception as e:
                 print(e)
                 turn_content = P(
-                    f"WARNING: Cannot access turn data for turn {turn}; potential Data Corruption",
+                    f"WARNING: Cannot access turn data for turn {turn}, potential data corruption",
                     style="color: red;",
                 )
             ui_elements.append(turn_content)

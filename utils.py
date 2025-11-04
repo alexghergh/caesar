@@ -220,7 +220,7 @@ def get_turn_trajectory_overviews(
 
 
 def fetch_baseline_time_by_problem_id(
-    baseline_time_filepath: str, level: int, problem_id: int
+    baseline_time_filepath: str | os.PathLike, level: int, problem_id: int
 ) -> dict:
     """
     Fetch the baseline time from the timing information file.
