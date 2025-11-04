@@ -232,10 +232,10 @@ def get(run_group: str, run_name: str, problem_id: str, sample_id: str):
         # so we don't depend on a relative path here
         # fetch timing baselines
         baseline_time_filepath = (
-            "../KernelBench/results/timing/H100_tsubame_2/baseline_time_torch.json"
+            "../KernelBench/results/timing/H100_tsubame/baseline_time_torch.json"
         )
         baseline_torch_compile_time_filepath = (
-            "../KernelBench/results/timing/H100_tsubame_2/baseline_time_torch_compile_inductor_default.json"
+            "../KernelBench/results/timing/H100_tsubame/baseline_time_torch_compile_inductor_default.json"
         )
 
         level = int(re.search(r"\d+", config_data["dataset_name"]).group())
@@ -274,7 +274,7 @@ def get(run_group: str, run_name: str, problem_id: str, sample_id: str):
                 " Max K: ",
                 Code(config_data["max_k"]),
                 ", Context_strategy: ",
-                Code("context-strategy"),
+                Code(config_data["prompt_strategy"]),
             ),
             Details(
                 Summary(
