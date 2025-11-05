@@ -211,7 +211,7 @@ class CaesarStateMachine:
             eval_result=self.llm_info.eval_result,
             profiler_result=self.llm_info.profiler_result,
             strategy=self.config.prompt_strategy,
-            max_profiler_feedback_length=2000, # TODO this is in characters; how big can traces actually get? #self.config.max_feedback_length,
+            max_profiler_feedback_length=4000, # TODO this is in characters; how big can traces actually get? #self.config.max_feedback_length,
         )
         self.llm_info.prompt[self.current_k] = self.curr_prompt
 

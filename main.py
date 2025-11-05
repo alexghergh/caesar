@@ -17,7 +17,7 @@ from KernelBenchInternal.dataset import (
 
 from state_machine import CaesarStateMachine
 from work import WorkArgs
-from custom_transitions import InferenceAndGPUTransition
+from custom_transitions import InferenceAndGPUAndProfilerTransition
 from logger import CaesarLogger
 from caesar_config import CaesarRunConfig
 from orchestrator import GPUOrchestrator
@@ -72,7 +72,7 @@ def init_and_run_single_sample_work(
     Initializes the work args, a logger and a state machine.
     """
 
-    transition = InferenceAndGPUTransition()
+    transition = InferenceAndGPUAndProfilerTransition()
 
     logger = CaesarLogger(
         os.path.join(
@@ -146,12 +146,8 @@ def main(config: CaesarRunConfig):
     # config files for all samples, pick the best, then re-write the config
     # files; anything else to consider? There will be stalls and dependencies if
     # some samples did not finish
-    # - write intermediate logs after each state machine state
-    # - better handling of GPU stuff, seems to be broken?
     # - CoT/ICL examples of progressive optimization
-    # - summaries of previous rounds / compiler feedback etc.
     # - RAG
-    # eval_kernel_against_ref doesn't seem to correctly clear GPU cache
 
     if config.verbose:
         print("Running with config: ", config)

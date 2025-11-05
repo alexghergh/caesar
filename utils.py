@@ -347,9 +347,6 @@ def build_llm_prompt_for_turn(
                         kernel_idx = idx
                         break
 
-            # TODO make sure that kernel_idx is guaranteed at this point to be a
-            # valid index to kernel code
-
             # NOTE: running with best_only will likely generate the same LLM
             # prompt for multiple turns, if the LLM fails to improve the code;
             # with temperature 0, the state machine will likely get stuck
@@ -436,10 +433,6 @@ def build_llm_prompt_for_turn(
                 Strategy.PROFILER_FEEDBACK in strategy
                 and profiler_result.get(kernel_idx, "") != ""
             ):
-                # TODO should we restrict the profiler feedback output if it
-                # gets too long? select parts of it? use the
-                # max_profiler_feedback_length info here
-
                 # if it's _not_ a best_only strategy, we need to mention for
                 # which kernel this feedback is
                 if Strategy.BEST_ONLY not in strategy:

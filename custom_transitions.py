@@ -44,7 +44,7 @@ class InferenceAndGPUTransition(Transition):
     }
 
 
-class InferenceAndGPUAndProfiler(Transition):
+class InferenceAndGPUAndProfilerTransition(Transition):
     """
     Multi-turn inference. Tests GPU kernels by compiling and checking for
     corectness at every turn. If correct, profiles and sends the feedback
