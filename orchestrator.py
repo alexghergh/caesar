@@ -10,8 +10,8 @@ class GPUOrchestrator:
     """
     Orchestrator for concurrent GPU usage.
 
-    This is used to ensure that we don't have multiple processes
-    accessing the same GPU.
+    This is used to ensure that we don't have multiple processes accessing the
+    same GPU.
     """
     def __init__(self, num_gpus=8, verbose=False):
         self.num_gpus = num_gpus
@@ -60,62 +60,3 @@ class GPUOrchestrator:
         if self.verbose:
             print("\n[ORCHESTRATOR] Cleaning up GPU Orchestrator...")
         sys.exit(0)
-
-
-
-def worker_process(process_id, orchestrator):
-    """Simulated worker process that needs GPU access."""
-    while True:
-        # Simulate some CPU work before needing GPU
-        time.sleep(random.uniform(0.1, 2))
-
-        print(f"[Orchestration] Process {process_id} requesting GPU...")
-
-        with orchestrator.reserve_gpu() as gpu_id:
-            print(f"[Orchestration] Process {process_id} acquired GPU {gpu_id}")
-
-            # Simulate GPU work
-            try:
-                # device = torch.device(f"cuda:{gpu_id}")
-                # Simulate some GPU computation
-                work_time = random.uniform(1, 5)
-                print(
-                    f"[Orchestration] Process {process_id} working on GPU {gpu_id} for {work_time:.2f} seconds"
-                )
-                time.sleep(work_time)
-            except Exception as e:
-                print(f"Process {process_id} encountered error: {e}")
-
-            print(f"[Orchestration] Process {process_id} releasing GPU {gpu_id}")
-
-
-def main():
-    # Create the GPU orchestrator
-    orchestrator = GPUOrchestrator(num_gpus=8)
-
-    # Create multiple worker processes
-    num_workers = 12  # More workers than GPUs to demonstrate queuing
-    processes = []
-
-    try:
-        # Start worker processes
-        for i in range(num_workers):
-            p = mp.Process(target=worker_process, args=(i, orchestrator))
-            p.start()
-            processes.append(p)
-
-        # Wait for all processes to complete (they won't in this case, need manual interrupt)
-        for p in processes:
-            p.join()
-
-    except KeyboardInterrupt:
-        print("\nShutting down...")
-        # Terminate all processes
-        for p in processes:
-            p.terminate()
-            p.join()
-
-
-if __name__ == "__main__":
-    mp.freeze_support()
-    main()

@@ -1,8 +1,7 @@
 import time
 import os
 import copy
-
-import torch
+import multiprocessing as mp
 
 from KernelBenchInternal import eval as kernel_eval
 from KernelBenchInternal.utils import (
@@ -13,8 +12,8 @@ from KernelBenchInternal.utils import (
 
 from eval import (
     compile_single_sample,
-    evaluate_single_sample_src,
-    get_torch_profiler_info
+    evaluate_single_sample_src_mp,
+    get_torch_profiler_info_mp,
 )
 from states import CaesarState, StateOutcome
 from work import WorkArgs
@@ -304,33 +303,60 @@ class CaesarStateMachine:
             print(f"[CORRECTNESS {self.work.problem_id}/{self.work.sample_id}] Requesting GPU...")
 
         with self.orchestrator.reserve_gpu() as gpu_id:
-            try:
-                if self.config.verbose:
-                    print(
-                        f"[CORRECTNESS {self.work.problem_id}/{self.work.sample_id}] "
-                        f"Acquired GPU {gpu_id}"
-                    )
-
-                device = torch.device(f"cuda:{gpu_id}")
-                start_time = time.time()
-
-                # TODO look into this more
-                result: kernel_eval.KernelExecResult = evaluate_single_sample_src(
-                    ref_arch_src=self.ref_problem_src,
-                    kernel_src=self.llm_info.kernel_code[self.current_k],
-                    configs=self.config,
-                    build_dir=self.build_dir,
-                    timeout_seconds=self.correctness_check_timeout,
-                    device=device
+            if self.config.verbose:
+                print(
+                    f"[CORRECTNESS {self.work.problem_id}/{self.work.sample_id}] "
+                    f"Acquired GPU {gpu_id}"
                 )
+
+            # launch a separate process to do the GPU work, as each process
+            # creates a pytorch context on the GPU; we want to avoid each
+            # CPU worker having such a separate context that persists, so
+            # spawning a separate process will clear the cache when the
+            # process finishes
+            result_queue = mp.Queue()
+            proc = mp.Process(
+                target=evaluate_single_sample_src_mp,
+                args=(
+                    self.ref_problem_src,
+                    self.llm_info.kernel_code[self.current_k],
+                    self.config,
+                    self.build_dir,
+                    gpu_id,
+                    self.correctness_check_timeout,
+                    result_queue,
+                ),
+            )
+            start_time = time.time()
+            proc.start()
+            proc.join(timeout=self.correctness_check_timeout)
+            work_time = time.time() - start_time
+
+            if proc.is_alive():
+                # this means we reached timeout
+                proc.terminate()
+                print(
+                    f"[CORRECTNESS {self.work.problem_id}/{self.work.sample_id}] "
+                    f"Working on GPU {gpu_id} operation timed out."
+                )
+                self.outcome = StateOutcome.CorrectnessFail
+                self.llm_info.eval_result[self.current_k] = kernel_eval.KernelExecResult(
+                    compiled=False,
+                    correctness=False,
+                    metadata={
+                        "timeout_error": "GPU timed out.",
+                        "hardware": "gpu",
+                        "device": f"cuda:{gpu_id}"
+                    }
+                )
+            else:
+                result = result_queue.get()
 
                 if self.config.verbose:
                     print(
                         f"[CORRECTNESS {self.work.problem_id}/{self.work.sample_id}] Result: ",
                         result,
                     )
-
-                work_time = time.time() - start_time
 
                 # record result (fields should be correctly set)
                 self.llm_info.eval_result[self.current_k] = result
@@ -344,42 +370,14 @@ class CaesarStateMachine:
                 if self.config.verbose:
                     print(
                         f"[CORRECTNESS {self.work.problem_id}/{self.work.sample_id}] "
-                        f"Working on GPU {gpu_id} ({device}) for {work_time:.2f} seconds"
+                        f"Working on GPU {gpu_id} for {work_time:.2f} seconds"
                     )
 
-            except TimeoutError:
+            if self.config.verbose:
                 print(
                     f"[CORRECTNESS {self.work.problem_id}/{self.work.sample_id}] "
-                    f"Working on GPU {gpu_id} operation timed out"
+                    f"Released GPU {gpu_id}"
                 )
-                self.outcome = StateOutcome.CorrectnessFail
-                self.llm_info.eval_result[self.current_k] = kernel_eval.KernelExecResult(
-                    compiled=False,
-                    correctness=False,
-                    metadata={
-                        "timeout_error": "GPU timed out.",
-                        "hardware": "gpu",
-                        "device": f"cuda:{gpu_id}"
-                    }
-                )
-
-            except Exception as e:
-                print(
-                    f"[CORRECTNESS {self.work.problem_id}/{self.work.sample_id}] "
-                    f"Working on GPU {gpu_id} encountered error: {e}"
-                )
-
-            finally:
-                try:
-                    del device
-                except:
-                    pass
-
-                if self.config.verbose:
-                    print(
-                        f"[CORRECTNESS {self.work.problem_id}/{self.work.sample_id}] "
-                        f"Released GPU {gpu_id}"
-                    )
 
     def performance_logic(self):
         """
@@ -390,46 +388,42 @@ class CaesarStateMachine:
             print(f"[PERF {self.work.problem_id}/{self.work.sample_id}] Requesting GPU...")
 
         with self.orchestrator.reserve_gpu() as gpu_id:
-            try:
+            if self.config.verbose:
                 print(f"[PERF {self.work.problem_id}/{self.work.sample_id}] Acquired GPU {gpu_id}")
 
-                device = torch.device(f"cuda:{gpu_id}")
-                start_time = time.time()
+            # launch a separate process to do the GPU work, as each process
+            # creates a pytorch context on the GPU; we want to avoid each
+            # CPU worker having such a separate context that persists, so
+            # spawning a separate process will clear the cache when the
+            # process finishes
+            result_queue = mp.Queue()
+            proc = mp.Process(
+                target=get_torch_profiler_info_mp,
+                args=(
+                    self.ref_problem_src,
+                    self.llm_info.kernel_code[self.current_k],
+                    self.build_dir,
+                    gpu_id,
+                    result_queue,
+                ),
+            )
+            start_time = time.time()
+            proc.start()
+            proc.join() # wait forever for profiler
+            work_time = time.time() - start_time
+            result = result_queue.get()
 
-                # TODO look into this more
-                result = get_torch_profiler_info(
-                    ref_arch_src=self.ref_problem_src,
-                    kernel_src=self.llm_info.kernel_code[self.current_k],
-                    build_dir=self.build_dir,
-                    device=device,
-                )
-                self.llm_info.profiler_result[self.current_k] = result
+            self.llm_info.profiler_result[self.current_k] = result
 
-                work_time = time.time() - start_time
-
-                if self.config.verbose:
-                    print(
-                        f"[PERF {self.work.problem_id}/{self.work.sample_id}] "
-                        f"Working on GPU {gpu_id} ({device}) for {work_time:.2f} seconds"
-                    )
-
-            except Exception as e:
+            if self.config.verbose:
                 print(
                     f"[PERF {self.work.problem_id}/{self.work.sample_id}] "
-                    f"Working on GPU {gpu_id} encountered error: {e}"
+                    f"Working on GPU {gpu_id} for {work_time:.2f} seconds"
                 )
-
-            finally:
-                try:
-                    del device
-                except:
-                    pass
-
-                if self.config.verbose:
-                    print(
-                        f"[PERF {self.work.problem_id}/{self.work.sample_id}] "
-                        f"Released GPU {gpu_id}"
-                    )
+                print(
+                    f"[PERF {self.work.problem_id}/{self.work.sample_id}] "
+                    f"Released GPU {gpu_id}"
+                )
 
         self.outcome = StateOutcome.Performance
 
