@@ -362,7 +362,7 @@ def build_llm_prompt_for_turn(
                 # use all previous kernel generations
                 # ignore turns where kernels are empty
                 prompt += ALL_PREVIOUSLY_GENERATED_KERNELS_HEADER
-                for idx, kern in kernels:
+                for idx, kern in kernels.items():
                     if kern != "":
                         prompt += ALL_PREVIOUSLY_GENERATED_KERNELS_ITERATION.format(
                             iteration=idx, kernel=kern
