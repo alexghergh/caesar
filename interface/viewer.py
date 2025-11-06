@@ -17,7 +17,7 @@ from KernelBenchInternal.dataset import (
 )
 
 # get root caesar directory (i.e., the parent of 'interface')
-ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 
 # add sys paths (needed for python import discovery)
 sys.path.append(ROOT_DIR)
@@ -36,6 +36,7 @@ from utils import (
 TIMING_BASELINE = "H100_tsubame"
 
 BASE_LOG_DIR = os.path.join(ROOT_DIR, "caesar_log_dir") # path to logs
+KERNEL_BENCH_PATH = os.path.join(ROOT_DIR, "..", "KernelBench")
 
 dataset_name_to_dataset = {
     "KernelBench/level1": KERNELBENCH_LEVEL_1_DATASET,
@@ -46,7 +47,9 @@ dataset_name_to_dataset = {
     "KernelBench/level3-subset": KERNELBENCH_LEVEL_3_SUBSET_DATASET,
 
     # debug
-    "KernelBench/level1-test": ["../KernelBench/KernelBench/level1/23_Softmax.py"],
+    "KernelBench/level1-test": [
+        os.path.join(KERNEL_BENCH_PATH, "KernelBench", "level1", "23_Softmax.py")
+    ],
 }
 
 # fastapi config
@@ -280,7 +283,7 @@ def get(run_group: str, run_name: str, problem_id: str, sample_id: str):
                 " Max K: ",
                 Code(config_data["max_k"]),
                 ", Context_strategy: ",
-                Code(config_data["prompt_strategy"]),
+                Code(config_data.get("prompt_strategy", "")),
             ),
             Details(
                 Summary(
