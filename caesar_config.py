@@ -27,7 +27,6 @@ class CaesarRunConfig(Config):
         self.temperature = 0.0
         self.top_p = 1.0
         self.top_k = 50
-        self.num_completions = 1 # beam search, should stay 1
         self.max_tokens = 4096
 
         # strategy for prompting; see strategy.py

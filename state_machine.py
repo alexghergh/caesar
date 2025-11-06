@@ -223,7 +223,7 @@ class CaesarStateMachine:
         kernel.
         """
         # query LLM
-        model_response = query_server(
+        model_response, token_usage = query_server(
             # prompt
             prompt=self.curr_prompt,
             # system_prompt='', # TODO maybe could use?
@@ -234,8 +234,8 @@ class CaesarStateMachine:
             ),
             top_p=self.config.top_p,
             top_k=self.config.top_k,
-            max_tokens=self.config.max_tokens, # for? also should be max_tokens - prompt
-            num_completions=self.config.num_completions, # for?
+            max_tokens=self.config.max_tokens, # TODO rework this to be max_tokens - prompt, following the statistics below
+            num_completions=1,
 
             # TODO rework these into config stuff
             is_reasoning_model=True, # claude, gpt, gemini
@@ -248,6 +248,7 @@ class CaesarStateMachine:
             model_name=self.config.model_name,
         )
         self.llm_info.model_response[self.current_k] = model_response
+        self.llm_info.token_usage[self.current_k] = token_usage
 
         kernel_code = extract_last_code(model_response, ["python", "cpp"])
 

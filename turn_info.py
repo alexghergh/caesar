@@ -7,6 +7,7 @@ class LLMTurnInfo:
         self._data = {
             "prompt": {}, # dict[int, str]
             "model_response": {}, # dict[int, str]
+            "token_usage": {}, # dict[int, dict]
             "kernel_code": {}, # dict[int, str]
             "eval_result": {}, # dict[int, dict] - compile / runtime feedback
             "profiler_result": {} # dict[int, str] - profiler feedback
@@ -32,8 +33,9 @@ class LLMTurnInfo:
         for data in self._data:
             ret_val[data] = self._data[data].get(key, "")
 
-        # special case default value for eval_result
+        # special case default values
         ret_val["eval_result"] = self._data["eval_result"].get(key, {})
+        ret_val["token_usage"] = self._data["token_usage"].get(key, {})
 
         return ret_val
 
@@ -42,5 +44,6 @@ class LLMTurnInfo:
         for field in self._data.keys():
             self._data[field][turn] = turn_data.get(field, "")
 
-        # special case default value for eval_result
+        # special case default values
         self._data["eval_result"][turn] = turn_data.get("eval_result", {})
+        self._data["token_usage"][turn] = turn_data.get("token_usage", {})

@@ -186,7 +186,12 @@ def main(config: CaesarRunConfig):
         workers_list.append(worker_proc)
 
     # tqdm progress tracker
-    with tqdm(total=work_queue.qsize(), desc="Overall progress") as pbar:
+    with tqdm(
+        total=work_queue.qsize(),
+        desc="Overall progress",
+        miniters=1,
+        mininterval=60
+    ) as pbar:
         while not work_queue.empty():
             time.sleep(1)
             pbar.n = progress.value

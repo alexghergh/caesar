@@ -81,6 +81,7 @@ class CaesarLogger:
             self.current_log[turn] = {
                 "prompt": "",
                 "model_response": "",
+                "token_usage": {},
                 "kernel_code": "",
                 "eval_result": {},
                 "profiler_result": "",
@@ -90,6 +91,8 @@ class CaesarLogger:
             self.current_log[turn]["prompt"] = llm_info.prompt[turn]
         if llm_info.model_response.get(turn, None):
             self.current_log[turn]["model_response"] = llm_info.model_response[turn]
+        if llm_info.model_response.get(turn, None):
+            self.current_log[turn]["token_usage"] = llm_info.token_usage[turn]
         if llm_info.kernel_code.get(turn, None):
             self.current_log[turn]["kernel_code"] = llm_info.kernel_code[turn]
         if llm_info.eval_result.get(turn, None):
