@@ -151,6 +151,7 @@ def main(config: CaesarRunConfig):
     # some samples did not finish
     # - CoT/ICL examples of progressive optimization
     # - RAG
+    # - hardware architecture information
 
     if config.verbose:
         print("Running with config: ", config)
