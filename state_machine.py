@@ -238,7 +238,7 @@ class CaesarStateMachine:
             num_completions=1,
 
             # TODO rework these into config stuff
-            is_reasoning_model=True, # claude, gpt, gemini
+            use_reasoning_model=True, # claude, gpt, gemini
             reasoning_effort='high', # gpt-5 only
 
             # server type
