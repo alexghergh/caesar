@@ -224,8 +224,11 @@ class CaesarStateMachine:
         """
         # query LLM
         model_response = query_server(
-            self.curr_prompt,
-            model_name=self.config.model_name,
+            # prompt
+            prompt=self.curr_prompt,
+            # system_prompt='', # TODO maybe could use?
+
+            # sampling
             temperature=(
                 0.0 if self.config.greedy_sample else self.config.temperature
             ),
@@ -233,9 +236,16 @@ class CaesarStateMachine:
             top_k=self.config.top_k,
             max_tokens=self.config.max_tokens, # for? also should be max_tokens - prompt
             num_completions=self.config.num_completions, # for?
+
+            # TODO rework these into config stuff
+            is_reasoning_model=True, # claude, gpt, gemini
+            reasoning_effort='high', # gpt-5 only
+
+            # server type
             server_port=self.config.server_port,
             server_address=self.config.server_address,
             server_type=self.config.server_type,
+            model_name=self.config.model_name,
         )
         self.llm_info.model_response[self.current_k] = model_response
 
