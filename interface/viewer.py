@@ -44,6 +44,9 @@ dataset_name_to_dataset = {
     "KernelBench/level1-subset": KERNELBENCH_LEVEL_1_SUBSET_DATASET,
     "KernelBench/level2-subset": KERNELBENCH_LEVEL_2_SUBSET_DATASET,
     "KernelBench/level3-subset": KERNELBENCH_LEVEL_3_SUBSET_DATASET,
+
+    # debug
+    "KernelBench/level1-test": ["../KernelBench/KernelBench/level1/23_Softmax.py"],
 }
 
 # fastapi config
