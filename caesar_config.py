@@ -30,7 +30,7 @@ class CaesarRunConfig(Config):
         self.max_tokens = 4096
 
         # strategy for prompting; see strategy.py
-        self.prompt_strategy = REQUIRED # set on CLI with e.g. prompt_strategy='["BEST_ONLY", "COMPILER_FEEDBACK"]'
+        self.prompt_strategy = REQUIRED # set on CLI with e.g. prompt_strategy='["SHOW_INLINE_SYNTAX", "COMPILER_FEEDBACK"]'
 
         # cpu workers and gpus available
         # workers are number of state machines running at one time
