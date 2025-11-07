@@ -196,7 +196,6 @@ def main(config: CaesarRunConfig):
         total=work_queue.qsize(),
         desc="Overall progress",
         miniters=1,
-        mininterval=60
     ) as pbar:
         while not work_queue.empty():
             time.sleep(1)
