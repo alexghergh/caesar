@@ -25,3 +25,7 @@ class Strategy(Enum):
     # whether to enable profiler feedback (i.e. torch profiler + nsys); this
     # also needs the profiler feedback transition in the state machine
     PROFILER_FEEDBACK = "use_profiler_feedback"
+
+    def __str__(self) -> str:
+        return self.name
+
