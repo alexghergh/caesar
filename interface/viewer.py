@@ -436,15 +436,33 @@ def get(run_group: str, run_name: str, problem_id: str, sample_id: str):
             ui_elements.append(no_final_result_content)
             final_result = {}
 
+        # get the token usage
+        total_input_tokens = 0
+        total_output_tokens = 0
+        for idx, turn_data in log_data.items():
+            total_input_tokens += int(turn_data.get("token_usage", {}).get("input_tokens", 0))
+            total_output_tokens += int(turn_data.get("token_usage", {}).get("output_tokens", 0))
+
         performance_content = Div(
             H2("Evaluation Results", style="margin-top: 0; margin-bottom: 10px;"),
             Div(
                 # Left half - Text content
                 Div(
                     P(
-                        "Final Sample Stats with turn=: ",
+                        "Final Sample Stats with turn= ",
                         Code(str(config_data["max_k"])),
                     ),
+                    P(Span("Token usage:", style="font-weight: bold;")),
+                    P(Span(
+                        "Input tokens: ",
+                        Code(f"{total_input_tokens} tokens"),
+                        style="margin-right: 20px;",
+                    )),
+                    P(Span(
+                        "Output tokens: ",
+                        Code(f"{total_output_tokens} tokens"),
+                        style="margin-right: 20px;",
+                    )),
                     Span(
                         "Compiled: ",
                         "✅"
@@ -502,6 +520,7 @@ def get(run_group: str, run_name: str, problem_id: str, sample_id: str):
                         Code(f"{baseline_torch_compile_time} ms"),
                         style="margin-right: 20px;",
                     ),
+                    P(),
                     P(Span("Performance Trajectory:", style="font-weight: bold;")),
                     Table(
                         Tr(
@@ -650,6 +669,50 @@ def get(run_group: str, run_name: str, problem_id: str, sample_id: str):
                                 "border-radius: 4px;"
                             ),
                             cls="marked",
+                        ),
+                        style="margin-bottom: 10px;",
+                    ),
+                    Details(
+                        Summary(
+                            f"Profiler Feedback - Turn {turn}",
+                            style=(
+                                "cursor: pointer;"
+                                "padding: 10px;"
+                                "background-color: #f0f0f0;"
+                            ),
+                        ),
+                        Pre(
+                            Code(
+                                turn_data.get("profiler_result", ""),
+                                style=(
+                                    "white-space: pre-wrap;"
+                                    "background-color: #f8f8f8;"
+                                    "padding: 10px;"
+                                    "border-radius: 4px;"
+                                ),
+                            )
+                        ),
+                        style="margin-bottom: 10px;",
+                    ),
+                    Details(
+                        Summary(
+                            f"Token usage - Turn {turn}",
+                            style=(
+                                "cursor: pointer;"
+                                "padding: 10px;"
+                                "background-color: #f0f0f0;"
+                            ),
+                        ),
+                        Pre(
+                            Code(
+                                json.dumps(turn_data.get("token_usage", {}), indent=2),
+                                style=(
+                                    "white-space: pre-wrap;"
+                                    "background-color: #f8f8f8;"
+                                    "padding: 10px;"
+                                    "border-radius: 4px;"
+                                ),
+                            )
                         ),
                         style="margin-bottom: 10px;",
                     ),
