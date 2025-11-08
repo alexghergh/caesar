@@ -2,25 +2,20 @@ import os
 import re
 import json
 import signal
-from typing import List
 
 from KernelBenchInternal.utils import read_file
 from KernelBenchInternal.eval import KernelExecResult
 
 from prompts import (
-    ALL_PREVIOUSLY_GENERATED_KERNELS_HEADER,
-    ALL_PREVIOUSLY_GENERATED_KERNELS_ITERATION,
-    COMPILER_FEEDBACK_BEST_ONLY_PROMPT,
-    COMPILER_FEEDBACK_ITERATION_PROMPT,
-    CORRECTNESS_FEEDBACK_BEST_ONLY_PROMPT,
-    CORRECTNESS_FEEDBACK_ITERATION_PROMPT,
+    COMPILER_FEEDBACK_PROMPT,
+    CORRECTNESS_FEEDBACK_PROMPT,
     EXAMPLE_CUDA_INLINE_SYNTAX,
     INITIAL_TASK_DESCRIPTION,
     INITIAL_INSTRUCTION,
     KERNEL_TO_OPTIMIZE,
-    PREVIOUSLY_GENERATED_BEST_KERNEL,
-    PROFILER_FEEDBACK_BEST_ONLY_PROMPT,
-    PROFILER_FEEDBACK_ITERATION_PROMPT,
+    PREVIOUSLY_GENERATED_BEST_AND_LAST_KERNELS,
+    PREVIOUSLY_GENERATED_KERNEL,
+    PROFILER_FEEDBACK_PROMPT,
     REFLECTION_COMPILER_FEEDBACK_INSTRUCTION,
     REFLECTION_CORRECTNESS_FEEDBACK_INSTRUCTION,
     REFLECTION_INSTRUCTION,
@@ -330,71 +325,69 @@ def build_llm_prompt_for_turn(
             return prompt
 
         else:
+            # get the best kernel so far in terms of runtime (the above `if`
+            # branch checks whether we do have a kernel; this means we have
+            # kernel code; however, it doesn't mean it compiled or ran
+            # correctly! that's why this can return None) and the last generated
+            # kernel (regardless of whether it compiled or ran correctly or not)
+            best_kernel_idx: int | None = _get_best_kernel_code(eval_result)
+            last_kernel_idx: int | None = _get_last_kernel_code(kernels)
 
-            # best kernel so far in terms of runtime (the above `if` branch
-            # checks whether we do have a kernel; this means we have kernel
-            # code; however, it doesn't mean it compiled or ran correctly!
-            # that's why this can return None)
-            best_kernel_idx: int | None = get_best_kernel_code(eval_result)
+            # at this point, last_kernel_idx is guaranteed non-None
+            # there's a few cases to consider:
+            # - best_kernel_idx is None (because no kernel compiled so far)
+            # - best_kernel_idx is the same as last_kernel_idx (because the last
+            # kernel compiled and ran correctly)
+            # - best_kernel_idx is different from last_kernel_idx (because we
+            # have a kernel that compiled and ran correctly at some previous
+            # iteration, but the last generated one either didn't compile,
+            # didn't run successfully, or was slower)
 
-            # if we don't have a _best_ kernel, we might still have some kernel
-            # code to give the LLM feedback on (e.g. compile errors, runtime
-            # errors etc.)
-            kernel_idx = best_kernel_idx
-            if best_kernel_idx is None:
-                for idx, kern in reversed(list(kernels.items())):
-                    if kern != "":
-                        kernel_idx = idx
-                        break
-
-            # NOTE: running with best_only will likely generate the same LLM
-            # prompt for multiple turns, if the LLM fails to improve the code;
-            # with temperature 0, the state machine will likely get stuck
-            # forever with the same LLM output!!!
-            if Strategy.BEST_ONLY in strategy:
-                prompt += PREVIOUSLY_GENERATED_BEST_KERNEL.format(
-                    prev_kernel_code=kernels[kernel_idx]
+            if best_kernel_idx is None or best_kernel_idx == last_kernel_idx:
+                # we don't have a best kernel yet OR it is the same as the
+                # last kernel
+                prompt += PREVIOUSLY_GENERATED_KERNEL.format(
+                    prev_kernel_code=kernels[last_kernel_idx]
                 )
-            else:
-                # use all previous kernel generations
-                # ignore turns where kernels are empty
-                prompt += ALL_PREVIOUSLY_GENERATED_KERNELS_HEADER
-                for idx, kern in kernels.items():
-                    if kern != "":
-                        prompt += ALL_PREVIOUSLY_GENERATED_KERNELS_ITERATION.format(
-                            iteration=idx, kernel=kern
-                        )
+            elif best_kernel_idx is not None and best_kernel_idx != last_kernel_idx:
+                # different kernels generated at different times
+                prompt += PREVIOUSLY_GENERATED_BEST_AND_LAST_KERNELS.format(
+                    best_kernel_code=kernels[best_kernel_idx],
+                    last_kernel_code=kernels[last_kernel_idx],
+                )
 
-            # feedback is ALWAYS for the best kernel (whether it is the last
-            # generated kernel or not); in the special case that multiple
-            # iterations are in the prompt, but the best kernel is not the last,
-            # we specifically mark the feedback as being for the best kernel
-            # (i.e. we specify the iteration index of the best kernel)
+            # we can either give the LLM feedback for the best kernel, or for
+            # all the kernels generated; as the prompts can get quite large
+            # (thousands of tokens) with multiple generated kernels, we should
+            # only offer the best feedback available at hand, which is either:
+            # - (best case) feedback for the kernel that compiled, ran, and has
+            # profiler output
+            # - (worst case) feedback for the last kernel that didn't compile or
+            # didn't run correctly
+            # - (in-between) if there's a valid (i.e. compiler + runtime
+            # correct) kernel at some previous iteration, but the kernel at the
+            # current iteration didn't compile or run correctly, or was slower
+            # than the best kernel, than tell the model about both
+            #
+            # as an action plan, we always offer compiler, correctness and
+            # profiler feedback for the last kernel, and profiler feedback for
+            # the best kernel when the last kernel is slower
 
             # offer compiler feedback if compilation failed; otherwise, move
             # on to correctness check
             if (
                 Strategy.COMPILER_FEEDBACK in strategy
-                and eval_result[kernel_idx].metadata != {} # check whether we actually compiled
-                                                        # i.e. the state machine might've
-                                                        # never transitioned into compilation
-                and eval_result[kernel_idx].compiled is False
+                and eval_result[last_kernel_idx].metadata != {} # always True
+                and eval_result[last_kernel_idx].compiled is False # always True
             ):
-                metadata = eval_result[kernel_idx].metadata
+                metadata = eval_result[last_kernel_idx].metadata
                 metadata.pop("hardware", None)
                 metadata.pop("device", None)
                 key = next(iter(metadata))
-                # if it's _not_ a best_only strategy, we need to mention for
-                # which kernel this feedback is
-                if Strategy.BEST_ONLY not in strategy:
-                    prompt += COMPILER_FEEDBACK_ITERATION_PROMPT.format(
-                        iteration=turn,
-                        compiler_feedback=f"{key}: {metadata[key]}"
-                    )
-                else:
-                    prompt += COMPILER_FEEDBACK_BEST_ONLY_PROMPT.format(
-                        compiler_feedback=f"{key}: {metadata[key]}"
-                    )
+
+                prompt += COMPILER_FEEDBACK_PROMPT.format(
+                    compiler_feedback=f"{key}: {metadata[key]}"
+                )
                 prompt += REFLECTION_COMPILER_FEEDBACK_INSTRUCTION
                 return prompt
 
@@ -403,47 +396,63 @@ def build_llm_prompt_for_turn(
             # on to profiler feedback
             if (
                 Strategy.CORRECTNESS_FEEDBACK in strategy
-                and eval_result[kernel_idx].metadata != {} # check whether we actually compiled
-                                                        # i.e. the state machine might've
-                                                        # never transitioned into compilation
-                and eval_result[kernel_idx].compiled is True
-                and eval_result[kernel_idx].correctness is False
+                and eval_result[last_kernel_idx].metadata != {}
+                and eval_result[last_kernel_idx].compiled is True
+                and eval_result[last_kernel_idx].correctness is False
             ):
-                metadata = eval_result[kernel_idx].metadata
+                metadata = eval_result[last_kernel_idx].metadata
                 metadata.pop("hardware", None)
                 metadata.pop("device", None)
-                key = next(iter(metadata))
-                # if it's _not_ a best_only strategy, we need to mention for
-                # which kernel this feedback is
-                if Strategy.BEST_ONLY not in strategy:
-                    prompt += CORRECTNESS_FEEDBACK_ITERATION_PROMPT.format(
-                        iteration=turn,
-                        correctness_feedback=f"{key}: {metadata[key]}"
-                    )
-                else:
-                    prompt += CORRECTNESS_FEEDBACK_BEST_ONLY_PROMPT.format(
-                        correctness_feedback=f"{key}: {metadata[key]}"
-                    )
+                issue = metadata.get("correctness_issue", "")
+                issue = metadata.get("runtime_error", "") if issue == "" else issue
+
+                prompt += CORRECTNESS_FEEDBACK_PROMPT.format(
+                    correctness_feedback=f"{issue}"
+                )
                 prompt += REFLECTION_CORRECTNESS_FEEDBACK_INSTRUCTION
                 return prompt
 
-            # this assumes that profiler data is empty if correctness check
-            # failed
-            if (
-                Strategy.PROFILER_FEEDBACK in strategy
-                and profiler_result.get(kernel_idx, "") != ""
-            ):
-                # if it's _not_ a best_only strategy, we need to mention for
-                # which kernel this feedback is
-                if Strategy.BEST_ONLY not in strategy:
-                    prompt += PROFILER_FEEDBACK_ITERATION_PROMPT.format(
-                        iteration=turn,
-                        profiler_feedback=profiler_result[kernel_idx][:max_profiler_feedback_length],
+            # best is none, last runtime issue
+            # best != last
+            # best == last
+
+            if Strategy.PROFILER_FEEDBACK in strategy:
+                # always include best kernel profiler feedback if available
+                if (
+                    best_kernel_idx is not None
+                    and profiler_result.get(best_kernel_idx, "") != ""
+                ):
+                    prompt += PROFILER_FEEDBACK_PROMPT.format(
+                        kernel="best",
+                        profiler_feedback=profiler_result[best_kernel_idx][
+                            :max_profiler_feedback_length
+                        ],
+                        runtime_ms=eval_result[best_kernel_idx].runtime,
                     )
-                else:
-                    prompt += PROFILER_FEEDBACK_BEST_ONLY_PROMPT.format(
-                        profiler_feedback=profiler_result[kernel_idx][:max_profiler_feedback_length],
+
+                # include last kernel profiler feedback if it was slower;
+                # if it was faster, then by definition the last kernel IS the
+                # best kernel
+                if (
+                    last_kernel_idx != best_kernel_idx
+
+                    # if there's no profiler feedback, we can be sure something
+                    # was wrong during compilation or runtime; skip the rest of
+                    # the checks
+                    and profiler_result.get(last_kernel_idx, "") != ""
+
+                    # last kernel is slower than the best kernel
+                    and eval_result[last_kernel_idx].runtime >
+                        eval_result[best_kernel_idx].runtime
+                ):
+                    prompt += PROFILER_FEEDBACK_PROMPT.format(
+                        kernel="previous",
+                        profiler_feedback=profiler_result[last_kernel_idx][
+                            :max_profiler_feedback_length
+                        ],
+                        runtime_ms=eval_result[last_kernel_idx].runtime,
                     )
+
                 prompt += REFLECTION_PROFILER_FEEDBACK_INSTRUCTION
                 return prompt
 
@@ -452,12 +461,12 @@ def build_llm_prompt_for_turn(
             return prompt
 
 
-def get_best_kernel_code(eval_result: dict) -> int | None:
+def _get_best_kernel_code(eval_result: dict) -> int | None:
     """
     Given the runtime stats of the current runs, returns the best executing
     kernel index in terms of its runtime.
 
-    If no such kernel exists, returns None.
+    If no such kernel exists, return None.
 
     *Note*: The index returned assumes the ordering of the eval_result
     dictionary is the same as the kernel code dictionary.
@@ -471,3 +480,17 @@ def get_best_kernel_code(eval_result: dict) -> int | None:
                 best_runtime = eval.runtime
                 best_idx = eval_idx
     return best_idx
+
+
+def _get_last_kernel_code(kernel_code: dict) -> int | None:
+    """
+    Get the index of the last kernel, regardless of compilation or runtime
+    performance.
+
+    If no such kernel exists, return None.
+    """
+    last_kernel_idx = None
+    for idx, code in kernel_code.items():
+        if code != "":
+            last_kernel_idx = idx
+    return last_kernel_idx

@@ -54,37 +54,41 @@ KERNEL_TO_OPTIMIZE = """You are given the following architecture to optimize:
 # initial instruction for the model to follow
 INITIAL_INSTRUCTION = """Optimize the architecture named Model with custom CUDA operators! Name your optimized output architecture ModelNew. Output the new code in codeblocks. Please generate real code, NOT pseudocode, make sure the code compiles and is fully functional. Just output the new model code, no other text, and NO testing code!\n\n"""
 
-# previous kernel generation, whether it's the best or the previous kernel;
-# for example, if there's no _best_ kernel (because it didn't compile or it
-# had runtime errors), we're passing the last generated kernel
-PREVIOUSLY_GENERATED_BEST_KERNEL = """Here is your previously generated kernel code:
+# previous kernel generation, whether it's the best or the last generated
+# kernel; for example, if there's no _best_ kernel (because it didn't compile
+# or it had runtime errors), we're passing the last generated kernel
+PREVIOUSLY_GENERATED_KERNEL = """Here is your previously generated kernel code:
 
 ```python
 {prev_kernel_code}
 ```\n\n"""
 
-ALL_PREVIOUSLY_GENERATED_KERNELS_HEADER = """The following are all the kernels you generated so far.\n\n"""
-
-ALL_PREVIOUSLY_GENERATED_KERNELS_ITERATION = """Previously generated kernel at iteration {iteration}:
+# previous kernels generated, best and last
+PREVIOUSLY_GENERATED_BEST_AND_LAST_KERNELS = """Here is the best kernel code you generated so far (which compiled and ran correctly on the GPU):
 
 ```python
-{kernel}
-```\n\n"""
+{best_kernel_code}
+```
+
+And here is the last kernel code you generated (which either had compilation or runtime issues, or was slower than the best kernel):
+
+```python
+{last_kernel_code}
+```
+
+You may use both these kernels to further improve your solution.\n\n"""
 
 # reflection prompt
 REFLECTION_INSTRUCTION = """Given your previously generated kernel as a baseline, improve and optimize the architecture named Model with custom CUDA operators! Name your optimized output architecture ModelNew. Output the new code in codeblocks. Please generate real code, NOT pseudocode, make sure the code compiles and is fully functional. Just output the new model code, no other text, and NO testing code!\n\n"""
 
 # compiler feedback for kernel code
-COMPILER_FEEDBACK_ITERATION_PROMPT = """The following is compiler feedback for the generated kernel at iteration {iteration}, which is your best kernel generated so far:\n\n{compiler_feedback}\n\n"""
-COMPILER_FEEDBACK_BEST_ONLY_PROMPT = """The following is compiler feedback for the generated kernel:\n\n{compiler_feedback}\n\n"""
+COMPILER_FEEDBACK_PROMPT = """The following is compiler feedback for the generated kernel that didn't compile correctly:\n\n{compiler_feedback}\n\n"""
 REFLECTION_COMPILER_FEEDBACK_INSTRUCTION = """Consider the above compilation failure issues carefully, fix your output architecture ModelNew (keep the same name), and further improve and optimize the architecture named Model with custom CUDA operators! Output the new code in codeblocks. Please generate real code, NOT pseudocode, make sure the code compiles and is fully functional. Just output the new model code, no other text, and NO testing code!\n\n"""
 
 # correctness feedback for kernel code
-CORRECTNESS_FEEDBACK_ITERATION_PROMPT = """The following is runtime feedback for the generated kernel at iteration {iteration}, which is your best kernel generated so far (the kernel successfully compiled, and it was evaluated on GPU and checked against the reference architecture):\n\n{correctness_feedback}\n\n"""
-CORRECTNESS_FEEDBACK_BEST_ONLY_PROMPT = """The following is runtime feedback for the generated kernel (the kernel successfully compiled, and it was evaluated on GPU and checked against the reference architecture):\n\n{correctness_feedback}\n\n"""
+CORRECTNESS_FEEDBACK_PROMPT = """The following is runtime feedback for the generated kernel that had runtime errors (the kernel successfully compiled, and it was evaluated on GPU and checked against the reference architecture):\n\n{correctness_feedback}\n\n"""
 REFLECTION_CORRECTNESS_FEEDBACK_INSTRUCTION = """Consider the above correctness issues carefully, fix your output architecture ModelNew (keep the same name), and further improve and optimize the architecture named Model with custom CUDA operators! Output the new code in codeblocks. Please generate real code, NOT pseudocode, make sure the code compiles and is fully functional. Just output the new model code, no other text, and NO testing code!\n\n"""
 
 # profiler feedback for kernel code
-PROFILER_FEEDBACK_ITERATION_PROMPT = """The following is profiler feedback over a number of trials for the generated kernel at iteration {iteration}, which is your best kernel generated so far (the kernel compiled successfully and passed basic runtime correctness checks when evaluated on the GPU against the reference architecture):\n\n{profiler_feedback}\n\n"""
-PROFILER_FEEDBACK_BEST_ONLY_PROMPT = """The following is profiler feedback over a number of trials for the generated kernel (the kernel compiled successfully and passed basic runtime correctness checks when evaluated on the GPU against the reference architecture):\n\n{profiler_feedback}\n\n"""
+PROFILER_FEEDBACK_PROMPT = """The following is profiler feedback over a number of trials for the {kernel} generated kernel that compiled and ran successfully when evaluated on the GPU against the reference architecture:\n\n{profiler_feedback}\nThis kernel had a runtime of {runtime_ms} ms.\n\n"""
 REFLECTION_PROFILER_FEEDBACK_INSTRUCTION = """Consider the above profiler output carefully, and further improve and optimize your output architecture ModelNew (keep the same name). Please rewrite the entire kernel to be as fast as possible. Output the new code in codeblocks. Please generate real code, NOT pseudocode, make sure the code compiles and is fully functional. Just output the new model code, no other text, and NO testing code!\n\n"""

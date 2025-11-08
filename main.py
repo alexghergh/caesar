@@ -179,7 +179,7 @@ def main(config: CaesarRunConfig):
 
     # launch CPU workers
     workers_list = []
-    for worker in range(config.num_workers):
+    for worker in range(min(config.num_workers, len(dataset))):
         worker_proc = mp.Process(
             target=launch_worker_process,
             args=(config, orchestrator, work_queue, progress),

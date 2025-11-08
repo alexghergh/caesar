@@ -57,8 +57,32 @@ PORT = 5008
 HOST_IP = 'localhost'
 app, rt = fast_app(hdrs=(MarkdownJS(), HighlightJS(langs=['python'])))
 
+## various helpers
 
-@rt('/view_results')
+def _get_input_tokens(turn_data):
+    toks = 0
+
+    # anthropic
+    toks += int(turn_data.get("token_usage", {}).get("input_tokens", 0))
+
+    # sglang
+    toks += int(turn_data.get("token_usage", {}).get("prompt_tokens", 0))
+
+    return toks
+
+def _get_output_tokens(turn_data):
+    toks = 0
+
+    # anthropic
+    toks += int(turn_data.get("token_usage", {}).get("output_tokens", 0))
+
+    # sglang
+    toks += int(turn_data.get("token_usage", {}).get("completion_tokens", 0))
+
+    return toks
+
+
+@rt('/')
 def get(run_group: str, run_name: str, problem_id: str, sample_id: str):
     run_group_stats = Details(
         Summary(
@@ -440,8 +464,8 @@ def get(run_group: str, run_name: str, problem_id: str, sample_id: str):
         total_input_tokens = 0
         total_output_tokens = 0
         for idx, turn_data in log_data.items():
-            total_input_tokens += int(turn_data.get("token_usage", {}).get("input_tokens", 0))
-            total_output_tokens += int(turn_data.get("token_usage", {}).get("output_tokens", 0))
+            total_input_tokens += _get_input_tokens(turn_data)
+            total_output_tokens += _get_output_tokens(turn_data)
 
         performance_content = Div(
             H2("Evaluation Results", style="margin-top: 0; margin-bottom: 10px;"),
