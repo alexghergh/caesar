@@ -417,6 +417,19 @@ def build_llm_prompt_for_turn(
             # best == last
 
             if Strategy.PROFILER_FEEDBACK in strategy:
+                # always include best kernel profiler feedback if available
+                if (
+                    best_kernel_idx is not None
+                    and profiler_result.get(best_kernel_idx, "") != ""
+                ):
+                    prompt += PROFILER_FEEDBACK_PROMPT.format(
+                        kernel="best",
+                        profiler_feedback=profiler_result[best_kernel_idx][
+                            :max_profiler_feedback_length
+                        ],
+                        runtime_ms=eval_result[best_kernel_idx].runtime,
+                    )
+
                 # include last kernel profiler feedback if it was slower;
                 # if it was faster, then by definition the last kernel IS the
                 # best kernel
@@ -438,19 +451,6 @@ def build_llm_prompt_for_turn(
                             :max_profiler_feedback_length
                         ],
                         runtime_ms=eval_result[last_kernel_idx].runtime,
-                    )
-
-                # always include best kernel profiler feedback if available
-                if (
-                    best_kernel_idx is not None
-                    and profiler_result.get(best_kernel_idx, "") != ""
-                ):
-                    prompt += PROFILER_FEEDBACK_PROMPT.format(
-                        kernel="best",
-                        profiler_feedback=profiler_result[best_kernel_idx][
-                            :max_profiler_feedback_length
-                        ],
-                        runtime_ms=eval_result[best_kernel_idx].runtime,
                     )
 
                 prompt += REFLECTION_PROFILER_FEEDBACK_INSTRUCTION

@@ -70,7 +70,7 @@ PREVIOUSLY_GENERATED_BEST_AND_LAST_KERNELS = """Here is the best kernel code you
 {best_kernel_code}
 ```
 
-And here is the last kernel code you generated (which did not compile or run correctly):
+And here is the last kernel code you generated (which either had compilation or runtime issues, or was slower than the best kernel):
 
 ```python
 {last_kernel_code}
@@ -90,5 +90,5 @@ CORRECTNESS_FEEDBACK_PROMPT = """The following is runtime feedback for the gener
 REFLECTION_CORRECTNESS_FEEDBACK_INSTRUCTION = """Consider the above correctness issues carefully, fix your output architecture ModelNew (keep the same name), and further improve and optimize the architecture named Model with custom CUDA operators! Output the new code in codeblocks. Please generate real code, NOT pseudocode, make sure the code compiles and is fully functional. Just output the new model code, no other text, and NO testing code!\n\n"""
 
 # profiler feedback for kernel code
-PROFILER_FEEDBACK_PROMPT = """The following is profiler feedback over a number of trials for the {kernel} generated kernel that compiled and ran successfully when evaluated on the GPU against the reference architecture:\n\n{profiler_feedback}\n\nThis kernel had a runtime of {runtime_ms} ms.\n\n"""
+PROFILER_FEEDBACK_PROMPT = """The following is profiler feedback over a number of trials for the {kernel} generated kernel that compiled and ran successfully when evaluated on the GPU against the reference architecture:\n\n{profiler_feedback}\nThis kernel had a runtime of {runtime_ms} ms.\n\n"""
 REFLECTION_PROFILER_FEEDBACK_INSTRUCTION = """Consider the above profiler output carefully, and further improve and optimize your output architecture ModelNew (keep the same name). Please rewrite the entire kernel to be as fast as possible. Output the new code in codeblocks. Please generate real code, NOT pseudocode, make sure the code compiles and is fully functional. Just output the new model code, no other text, and NO testing code!\n\n"""
