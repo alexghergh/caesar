@@ -210,9 +210,9 @@ def main(config: CaesarRunConfig):
     ) as pbar:
         while not work_queue.empty():
             time.sleep(1)
-            pbar.n = progress.value
-            pbar.last_print_n = progress.value
-            pbar.update(0)
+            with progress.get_lock():
+                pbar.update(progress.value)
+                progress.value = 0
 
     # wait for all CPU workers to finish
     for worker_proc in workers_list:
