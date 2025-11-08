@@ -104,7 +104,7 @@ def get(run_group: str, run_name: str, problem_id: str, sample_id: str):
         A(
             "Previous problem",
             href=(
-                f"/view_results?"
+                f"/?"
                     f"run_group={run_group}&"
                     f"run_name={run_name}&"
                     f"problem_id={get_prev_problem_id(problems, int(problem_id))}&"
@@ -129,7 +129,7 @@ def get(run_group: str, run_name: str, problem_id: str, sample_id: str):
         A(
             "Next problem",
             href=(
-                f"/view_results?"
+                f"/?"
                     f"run_group={run_group}&"
                     f"run_name={run_name}&"
                     f"problem_id={get_next_problem_id(problems, int(problem_id))}&"
@@ -158,7 +158,7 @@ def get(run_group: str, run_name: str, problem_id: str, sample_id: str):
         A(
             "Previous sample",
             href=(
-                f"/view_results?"
+                f"/?"
                     f"run_group={run_group}&"
                     f"run_name={run_name}&"
                     f"problem_id={problem_id}&"
@@ -183,7 +183,7 @@ def get(run_group: str, run_name: str, problem_id: str, sample_id: str):
         A(
             "Next sample",
             href=(
-                f"/view_results?"
+                f"/?"
                     f"run_group={run_group}&"
                     f"run_name={run_name}&"
                     f"problem_id={problem_id}&"

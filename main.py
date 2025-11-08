@@ -9,9 +9,15 @@ from tqdm import tqdm
 
 from KernelBenchInternal.dataset import (
     KernelBenchDataset,
-    KERNELBENCH_LEVEL_1_DATASET, KERNELBENCH_LEVEL_1_SUBSET_DATASET,
-    KERNELBENCH_LEVEL_2_DATASET, KERNELBENCH_LEVEL_2_SUBSET_DATASET,
-    KERNELBENCH_LEVEL_3_DATASET, KERNELBENCH_LEVEL_3_SUBSET_DATASET,
+    KERNELBENCH_LEVEL_1_DATASET,
+    KERNELBENCH_LEVEL_1_SUBSET_DATASET,
+    KERNELBENCH_LEVEL_1_RANDOM_SUBSET_DATASET,
+    KERNELBENCH_LEVEL_2_DATASET,
+    KERNELBENCH_LEVEL_2_SUBSET_DATASET,
+    KERNELBENCH_LEVEL_2_RANDOM_SUBSET_DATASET,
+    KERNELBENCH_LEVEL_3_DATASET,
+    KERNELBENCH_LEVEL_3_SUBSET_DATASET,
+    KERNELBENCH_LEVEL_3_RANDOM_SUBSET_DATASET,
 )
 
 
@@ -34,6 +40,9 @@ dataset_name_to_dataset = {
     "KernelBench/level1-subset": KERNELBENCH_LEVEL_1_SUBSET_DATASET,
     "KernelBench/level2-subset": KERNELBENCH_LEVEL_2_SUBSET_DATASET,
     "KernelBench/level3-subset": KERNELBENCH_LEVEL_3_SUBSET_DATASET,
+    "KernelBench/level1-random": KERNELBENCH_LEVEL_1_RANDOM_SUBSET_DATASET,
+    "KernelBench/level2-random": KERNELBENCH_LEVEL_2_RANDOM_SUBSET_DATASET,
+    "KernelBench/level3-random": KERNELBENCH_LEVEL_3_RANDOM_SUBSET_DATASET,
 
     # debug
     "KernelBench/level1-test": [
@@ -158,6 +167,8 @@ def main(config: CaesarRunConfig):
     # - CoT/ICL examples of progressive optimization
     # - RAG
     # - hardware architecture information
+    # - state machine run orchestrator
+    # - ncu / nsys profiling instead of torch
 
     if config.verbose:
         print("Running with config: ", config)
