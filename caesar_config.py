@@ -29,6 +29,11 @@ class CaesarRunConfig(Config):
         self.top_k = 50
         self.max_tokens = 4096
 
+        # reasoning models setup
+        self.reasoning_model = False
+        self.reasoning_effort = '' # gpt-5 only; can be 'low', 'high', 'medium'
+        self.reasoning_budget_tokens = 0 # claude models only; if 0, set to max_tokens / 2
+
         # strategy for prompting; see strategy.py
         self.prompt_strategy = REQUIRED # set on CLI with e.g. prompt_strategy='["SHOW_INLINE_SYNTAX", "COMPILER_FEEDBACK"]'
 

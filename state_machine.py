@@ -226,7 +226,6 @@ class CaesarStateMachine:
         model_response, token_usage = query_server(
             # prompt
             prompt=self.curr_prompt,
-            # system_prompt='', # TODO maybe could use?
 
             # sampling
             temperature=(
@@ -234,12 +233,12 @@ class CaesarStateMachine:
             ),
             top_p=self.config.top_p,
             top_k=self.config.top_k,
-            max_tokens=self.config.max_tokens, # TODO rework this to be max_tokens - prompt, following the statistics below
-            num_completions=1,
+            max_tokens=self.config.max_tokens,
 
-            # TODO rework these into config stuff
-            use_reasoning_model=True, # claude, gpt, gemini
-            reasoning_effort='high', # gpt-5 only
+            # reasoning models
+            use_reasoning_model=self.config.reasoning_model, # claude, gpt, gemini
+            reasoning_effort=self.config.reasoning_effort, # gpt-5 only
+            budget_tokens=self.config.reasoning_budget_tokens, # claude
 
             # server type
             server_port=self.config.server_port,
