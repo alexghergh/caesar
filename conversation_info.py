@@ -1,16 +1,16 @@
 from typing import Any
 
 
-class LLMTurnInfo:
+class ConversationInfo:
     def __init__(self) -> None:
         # each parameter contains info for each turn
         self._data = {
-            "prompt": {}, # dict[int, str]
-            "model_response": {}, # dict[int, str]
-            "token_usage": {}, # dict[int, dict]
-            "kernel_code": {}, # dict[int, str]
-            "eval_result": {}, # dict[int, dict] - compile / runtime feedback
-            "profiler_result": {} # dict[int, str] - profiler feedback
+            'input_prompt': {}, # dict[int, str]
+            'model_response': {}, # dict[int, str]
+            'kernel_code': {}, # dict[int, str]
+            'token_usage': {}, # dict[int, dict]
+            'eval_result': {}, # dict[int, dict] - compile / runtime feedback
+            'profiler_result': {} # dict[int, str] - profiler feedback
         }
 
     def __getattr__(self, name: str):
@@ -21,7 +21,7 @@ class LLMTurnInfo:
             raise AttributeError(f"'LLMTurnInfo' object has no attribute '{name}'.")
 
     def __setattr__(self, name: str, value: Any):
-        if name == "_data":
+        if name == '_data':
             super().__setattr__(name, value)
         else:
             # should not reach this
@@ -34,8 +34,8 @@ class LLMTurnInfo:
             ret_val[data] = self._data[data].get(key, "")
 
         # special case default values
-        ret_val["eval_result"] = self._data["eval_result"].get(key, {})
-        ret_val["token_usage"] = self._data["token_usage"].get(key, {})
+        ret_val['eval_result'] = self._data['eval_result'].get(key, {})
+        ret_val['token_usage'] = self._data['token_usage'].get(key, {})
 
         return ret_val
 
@@ -45,5 +45,5 @@ class LLMTurnInfo:
             self._data[field][turn] = turn_data.get(field, "")
 
         # special case default values
-        self._data["eval_result"][turn] = turn_data.get("eval_result", {})
-        self._data["token_usage"][turn] = turn_data.get("token_usage", {})
+        self._data['eval_result'][turn] = turn_data.get('eval_result', {})
+        self._data['token_usage'][turn] = turn_data.get('token_usage', {})

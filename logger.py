@@ -1,25 +1,18 @@
 import json
-from typing import Dict
 from pathlib import Path
 
-from pydra import Config
-
-from KernelBenchInternal import eval as kernel_eval
-
-from work import WorkArgs
 from utils import ensure_json_serializable, exec_log_to_obj
-from turn_info import LLMTurnInfo
+from conversation_info import ConversationInfo
 
 
 class CaesarLogger:
     """
     Logger for _a single instance_ of a problem (i.e. one problem, one sample).
     """
+
     def __init__(
         self,
         log_dir: str,
-        config: Config,
-        work: WorkArgs,
         log_name: str = "log.json",
         verbose: bool = False,
     ):
@@ -31,22 +24,14 @@ class CaesarLogger:
         self.log_dir.mkdir(parents=True, exist_ok=True)
 
         self.log_file = self.log_dir / log_name
-        self.config_file = self.log_dir / "config.json"
 
         self.current_log: dict = {}
 
         self.verbose = verbose
 
-        # log the run config with initial params
-        self._log_config(config.to_dict())
-
-    def _log_config(self, config: dict) -> None:
-        with open(self.config_file, 'w') as f:
-            json.dump(ensure_json_serializable(config), f, indent=2)
-
     def save_log(self) -> None:
         """Save the current log to a JSON file."""
-        with open(self.log_file, 'w') as f:
+        with open(self.log_file, "w") as f:
             json.dump(ensure_json_serializable(self.current_log), f, indent=2)
             if self.verbose:
                 print(f"[LOG] Saved {self.log_file}")
@@ -58,10 +43,10 @@ class CaesarLogger:
         needed.
         """
         if self.log_file.exists():
-            with open(self.log_file, 'r') as f:
+            with open(self.log_file, "r") as f:
                 self.current_log = json.load(f)
                 for k in list(self.current_log.keys()):
-                    # transform turns from json's str into int
+                    # turns: str -> ints (json stores as str)
                     if k.isdigit():
                         self.current_log[int(k)] = self.current_log.pop(k)
 
@@ -76,31 +61,31 @@ class CaesarLogger:
         """
         self.current_log.clear()
 
-    def update_turn(self, turn: int, llm_info: LLMTurnInfo) -> None:
+    def update_turn(self, turn: int, llm_info: ConversationInfo) -> None:
         if turn not in self.current_log:
             self.current_log[turn] = {
-                "prompt": "",
+                "input_prompt": "",
                 "model_response": "",
-                "token_usage": {},
                 "kernel_code": "",
+                "token_usage": {},
                 "eval_result": {},
                 "profiler_result": "",
             }
 
-        if llm_info.prompt.get(turn, None):
-            self.current_log[turn]["prompt"] = llm_info.prompt[turn]
+        if llm_info.input_prompt.get(turn, None):
+            self.current_log[turn]["input_prompt"] = llm_info.input_prompt[turn]
         if llm_info.model_response.get(turn, None):
             self.current_log[turn]["model_response"] = llm_info.model_response[turn]
-        if llm_info.model_response.get(turn, None):
-            self.current_log[turn]["token_usage"] = llm_info.token_usage[turn]
         if llm_info.kernel_code.get(turn, None):
             self.current_log[turn]["kernel_code"] = llm_info.kernel_code[turn]
+        if llm_info.model_response.get(turn, None):
+            self.current_log[turn]["token_usage"] = llm_info.token_usage[turn]
         if llm_info.eval_result.get(turn, None):
             self.current_log[turn]["eval_result"] = llm_info.eval_result[turn]
         if llm_info.profiler_result.get(turn, None):
             self.current_log[turn]["profiler_result"] = llm_info.profiler_result[turn]
 
-    def update_turn_and_log(self, turn: int, llm_info: LLMTurnInfo) -> None:
+    def update_turn_and_log(self, turn: int, llm_info) -> None:
         """
         Update the data for a specific turn, then save the log data.
 

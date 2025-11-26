@@ -1,7 +1,11 @@
 import time
 import os
 import copy
+import json
 import multiprocessing as mp
+from pathlib import Path
+
+from langgraph.graph.state import CompiledStateGraph
 
 from KernelBenchInternal import eval as kernel_eval
 from KernelBenchInternal.utils import (
@@ -9,108 +13,68 @@ from KernelBenchInternal.utils import (
     query_server,
     read_file,
 )
+from langgraph.graph import StateGraph, START, END
 
 from eval import (
     compile_single_sample,
     evaluate_single_sample_src_mp,
     get_torch_profiler_info_mp,
 )
-from states import CaesarState, StateOutcome
+from states import StateOutcome
 from work import WorkArgs
 from logger import CaesarLogger
-from utils import build_llm_prompt_for_turn
+from utils import build_llm_prompt_for_turn, ensure_json_serializable
 from orchestrator import GPUOrchestrator
-from transition import Transition
 from caesar_config import CaesarRunConfig
-from turn_info import LLMTurnInfo
+from graph_state import ConversationInfo, CaesarGraphState
 
 
-class CaesarStateMachine:
-    def __init__(
-        self,
-        transitions: Transition,
-        config: CaesarRunConfig,
-        work: WorkArgs,
-        logger: CaesarLogger,
-        process_id: int,
-        orchestrator: GPUOrchestrator,
-    ):
-        self.transitions = transitions
-        self.config = config
-        self.work = work
 
-        self.state = CaesarState.START_STATE
+def setup_state_machine_handler(state: CaesarGraphState) -> CaesarGraphState:
+    """
+    Initialize all required fields from the graph state.
+    """
+    logger = state['logger']
+    config = state['config']
+    work = state['work']
+    conversation_info = state['conversation_info']
 
-        self.current_k = 1
-        self.max_k = config.max_k
+    # skip if run already finished
+    if os.path.exists(os.path.join(logger.log_dir, "DONE")):
+        print(
+            f"[SKIP] Run {config.run_name}, problem id {work.problem_id}, "
+            f"sample id {work.sample_id} already finished... skipping"
+        )
+        state['state_outcome'] = StateOutcome.SetupFinishRun
+        return state
 
-        # contains the reference problem in Python code as a string
-        # load it from KernelBench repo
-        self.ref_problem_src = read_file(self.work.problem_path)
-
-        # build dir to cache compiled problems
-        self.build_dir = os.path.join(
-            self.config.build_dir_prefix,
-            self.config.run_group,
-            self.config.run_name,
-            self.work.get_log_path(),
+    # resume log info if available
+    if os.path.exists(logger.log_file):
+        print(
+            f"[RECOVER {work.problem_id}/{work.sample_id}] "
+            f"Run was not finished, loading existing partial results from "
+            f"{logger.log_file}"
         )
 
-        self.logger = logger
-
-        # LLM state information (all turns)
-        self.curr_prompt: str = "" # current context (built out of all the info from llm_info)
-        self.llm_info = LLMTurnInfo()
-
-        # timeout stuff
-        self.compilation_timeout = config.timeout
-        self.correctness_check_timeout = config.timeout
-
-        # check if run is already finished
-        if os.path.exists(os.path.join(self.logger.log_dir, "DONE")):
-            print(
-                f"[SKIP] Run {self.config.run_name}, problem id {self.work.problem_id}, sample {self.work.sample_id} already finished... skipping"
-            )
-            self.finished = True # skip the whole run
-            return
-
-        # check if previous run exists
-        elif os.path.exists(self.logger.log_file):
-            print(
-                f"[RECOVER {self.work.problem_id}/{self.work.sample_id}] "
-                f"Run was not finished, loading existing partial results from {self.logger.log_file}"
-            )
-            self.load_from_previous_run()
-
-        self.finished = False
-
-        # set up orchestrator
-        self.process_id = process_id
-        self.orchestrator = orchestrator
-
-    def load_from_previous_run(self):
-        """
-        Load previous information from a prior run if it exists in the log dir.
-        """
-        self.logger.load_log()
-        saved_log = copy.deepcopy(self.logger.current_log)
+        logger.load_log()
+        saved_log = copy.deepcopy(logger.current_log)
 
         # clean the log at this point
         # in case the run finished abruptly, we need to rebuild log
-        self.logger.clean_log()
+        logger.clean_log()
 
-        if self.config.verbose:
+        if config.verbose:
             print(
-                f"[RECOVER {self.work.problem_id}/{self.work.sample_id}] "
+                f"[RECOVER {work.problem_id}/{work.sample_id}] "
                     "Recoreved log data from previous run: ",
                 saved_log.keys(),
             )
 
         # check turn data
-        for turn in range(1, self.max_k + 2):
+        for turn in range(1, config.max_turn + 2):
 
             # check if this is the first turn that is not recorded in the log
-            self.current_k = turn
+            state['current_turn'] = turn
             if turn not in saved_log:
                 # start from this turn
                 break
@@ -118,347 +82,570 @@ class CaesarStateMachine:
             # current turn
             turn_data = saved_log[turn]
 
-            self.llm_info.update_turn_data(turn, {
-                "prompt": turn_data.get("prompt", ""),
-                "model_response": turn_data.get("model_response", ""),
-                "kernel_code": turn_data.get("kernel_code", ""),
-                "eval_result": turn_data.get("eval_result", {}),
-                "profiler_result": turn_data.get("profiler_result", ""),
+            # update turn data
+            conversation_info.update_turn_data(turn, {
+                'input_prompt': turn_data.get('input_prompt', ''),
+                'model_response': turn_data.get('model_response', ''),
+                'kernel_code': turn_data.get('kernel_code', ''),
+                'token_usage': turn_data.get('token_usage', {}),
+                'eval_result': turn_data.get('eval_result', {}),
+                'profiler_result': turn_data.get('profiler_result', ''),
             })
 
             # if these are empty, this turn was corrupted somehow
             # re-do this turn
             if (
-                self.llm_info.prompt[turn] == ""
-                or self.llm_info.model_response[turn] == ""
-                or self.llm_info.kernel_code[turn] == ""
+                conversation_info.input_prompt[turn] == ""
+                or conversation_info.model_response[turn] == ""
+                or conversation_info.kernel_code[turn] == ""
             ):
-                self.current_k = turn
+                state['current_turn'] = turn
                 break
 
             # otherwise, rebuild turn log data
-            self.logger.update_turn(turn=turn, llm_info=self.llm_info)
+            logger.update_turn(turn=turn, llm_info=conversation_info)
 
         # at the end of recovery, save log
         # if nothing was wrong, then the same info is dumped; if something was
         # wrong at some round, then we write to discard any later data
-        self.logger.save_log()
+        logger.save_log()
 
         # special case: everything is finished, but the DONE file is not written
         # for whatever reason; passthrough to the end
-        if self.current_k == self.max_k + 1:
-            self.current_k -= 1
-            self.state = CaesarState.FINISH_STATE
+        if state['current_turn'] == config.max_turn + 1:
+            state['current_turn'] -= 1
+            state['state_outcome'] = StateOutcome.SetupFinishRun
+            return state
 
-
-        if self.config.verbose:
+        if config.verbose:
             print(
-                f"[RECOVER {self.work.problem_id}/{self.work.sample_id}] "
-                f"Resuming from round {self.current_k}"
+                f"[RECOVER {work.problem_id}/{work.sample_id}] "
+                f"Resuming from round {state['current_turn']}"
             )
 
-
-    def run(self) -> None:
-        """
-        Main state machine event loop.
-        """
-
-        # check if DONE file written
-        if self.finished:
-            return
-
-        while self.current_k <= self.max_k:
-
-            if self.config.show_state:
-                print(
-                    f"[STATEMACHINE {self.work.problem_id}/{self.work.sample_id}] "
-                    f"Round {self.current_k}, entering state: {self.state}"
-                )
-
-            match self.state:
-                case CaesarState.START_STATE:
-                    self.start_turn_logic()
-                case CaesarState.GENERATE_STATE:
-                    self.generate_logic()
-                case CaesarState.COMPILE_STATE:
-                    self.compile_logic()
-                case CaesarState.CORRECTNESS_STATE:
-                    self.correctness_check_logic()
-                case CaesarState.PERFORMANCE_STATE:
-                    self.performance_logic()
-                case CaesarState.FINISH_STATE:
-                    self.finish_turn_logic()
-
-                case _:
-                    raise ValueError(f"Invalid state to be in: {self.state}")
-
-            # transition to next state
-            # (current_state, outcome) -> next_state
-            self.state = self.transitions[self.outcome]
+    state['state_outcome'] = StateOutcome.SetupDone
+    return state
 
 
-    def start_turn_logic(self):
-        """
-        Logic for the start state of each turn. If we didn't yet reach the
-        maximum number of turns allowed, keep looping.
-        """
+def create_prompt_handler(state: CaesarGraphState) -> CaesarGraphState:
+    """
+    Create the prompt for the model.
+    """
+    config = state['config']
+    work = state['work']
+    conv_info = state['conversation_info']
+    current_turn = state['current_turn']
 
-        # initialize this round's prompt with the information so far
-        self.curr_prompt = build_llm_prompt_for_turn(
-            turn=self.current_k,
-            ref_arch_src=self.ref_problem_src,
-            kernels=self.llm_info.kernel_code,
-            eval_result=self.llm_info.eval_result,
-            profiler_result=self.llm_info.profiler_result,
-            strategy=self.config.prompt_strategy,
-            max_profiler_feedback_length=4000, # TODO this is in characters; how big can traces actually get? #self.config.max_feedback_length,
+    if config.show_state:
+        print(
+            f"[STATEMACHINE {work.problem_id}/{work.sample_id}] "
+            f"Round {current_turn}, entering state: CREATE_PROMPT"
         )
-        self.llm_info.prompt[self.current_k] = self.curr_prompt
 
-        self.outcome = StateOutcome.Start
+    # initialize this round's prompt with the information so far
+    # TODO build llm prompt should just be another node I guess, conditioned on
+    # the generation type (i.e. simple or gepa)
+    conv_info.input_prompt[current_turn] = build_llm_prompt_for_turn(
+        turn=current_turn,
+        ref_arch_src=state['ref_problem_src'],
+        kernels=conv_info.kernel_code,
+        eval_result=conv_info.eval_result,
+        profiler_result=conv_info.profiler_result,
+        strategy=config.prompt_strategy,
+        max_profiler_feedback_length=4000,  # TODO this is in characters; how big can traces actually get? #self.config.max_feedback_length,
+    )
 
-    def generate_logic(self):
-        """
-        Logic for the generation state. Query LLM given context and generate
-        kernel.
-        """
-        # query LLM
-        model_response, token_usage = query_server(
-            # prompt
-            prompt=self.curr_prompt,
+    state['state_outcome'] = StateOutcome.Start
+    return state
 
-            # sampling
-            temperature=(
-                0.0 if self.config.greedy_sample else self.config.temperature
+
+def query_llm_handler(state: CaesarGraphState) -> CaesarGraphState:
+    """
+    Logic for the generation state. Query LLM given context and generate kernel.
+    """
+    config = state['config']
+    work = state['work']
+    current_turn = state['current_turn']
+    conv_info = state['conversation_info']
+
+    if config.show_state:
+        print(
+            f"[STATEMACHINE {work.problem_id}/{work.sample_id}] "
+            f"Round {current_turn}, entering state: QUERY_LLM"
+        )
+
+    # query LLM
+    model_response, token_usage = query_server(
+        # prompt
+        prompt=conv_info.input_prompt[current_turn],
+
+        # sampling
+        temperature=(
+            0.0 if config.greedy_sample else config.temperature
+        ),
+        top_p=config.top_p,
+        top_k=config.top_k,
+        max_tokens=config.max_tokens,
+
+        # reasoning models
+        use_reasoning_model=config.reasoning_model, # claude, gpt, gemini
+        reasoning_effort=config.reasoning_effort, # gpt-5 only
+        budget_tokens=config.reasoning_budget_tokens, # claude
+
+        # server type
+        server_port=config.server_port,
+        server_address=config.server_address,
+        server_type=config.server_type,
+        model_name=config.model_name,
+    )
+    conv_info.model_response[current_turn] = model_response
+    conv_info.token_usage[current_turn] = token_usage
+
+    kernel_code = extract_last_code(model_response, ["python", "cpp"])
+
+    # if we failed to generate a kernel, simply move to the next round
+    if kernel_code is None or len(kernel_code) == 0:
+        if config.verbose:
+            print(
+                f"[GENERATE {work.problem_id}/{work.sample_id}] "
+                "Failed to generate kernel code."
+            )
+        state['state_outcome'] = StateOutcome.GenerateFail
+    else:
+        conv_info.kernel_code[current_turn] = kernel_code
+        state['state_outcome'] = StateOutcome.GenerateSuccess
+
+    return state
+
+
+def compile_handler(state: CaesarGraphState) -> CaesarGraphState:
+    """
+    Logic for the CPU compilation state.
+    """
+    config = state['config']
+    work = state['work']
+    current_turn = state['current_turn']
+    conv_info = state['conversation_info']
+
+    if config.show_state:
+        print(
+            f"[STATEMACHINE {work.problem_id}/{work.sample_id}] "
+            f"Round {current_turn}, entering state: COMPILATION"
+        )
+
+    # compile kernel and build cache
+    returncode, stdout, err = compile_single_sample(
+        kernel_src=conv_info.kernel_code[current_turn],
+        config=config,
+        build_dir=state['build_dir'],
+        timeout_seconds=config.timeout
+    )
+
+    if config.verbose:
+        print(f"[COMPILE {work.problem_id}/{work.sample_id}] Return code: {returncode}")
+        print(f"[COMPILE {work.problem_id}/{work.sample_id}] Compile stdout: {stdout}")
+        print(f"[COMPILE {work.problem_id}/{work.sample_id}] Compile stderr: {err}")
+
+    if returncode == 0:
+        # write partial eval result here, since compilation succeeded
+        # we'll write more later if doing correctness check
+        conv_info.eval_result[current_turn] = kernel_eval.KernelExecResult(
+            compiled=True,
+            metadata={
+                "hardware": "cpu",
+                "device": "cpu",
+            }
+        )
+        state['state_outcome'] = StateOutcome.CompileSuccess
+    else:
+        # register compilation failure as eval result
+        conv_info.eval_result[current_turn] = kernel_eval.KernelExecResult(
+            compiled=False,
+            correctness=False,
+            metadata={
+                "compiler_error": f"Compilation failed.\nstdout: {stdout}\nstderr: {err}",
+                "hardware": "cpu",
+                "device": "cpu"
+            }
+        )
+        state['state_outcome'] = StateOutcome.CompileFail
+    return state
+
+
+def correctness_check_handler(state: CaesarGraphState) -> CaesarGraphState:
+    """
+    Check kernel code correctness.
+    """
+    config = state['config']
+    orchestrator = state['orchestrator']
+    work = state['work']
+    current_turn = state['current_turn']
+    conv_info = state['conversation_info']
+
+    if config.show_state:
+        print(
+            f"[STATEMACHINE {work.problem_id}/{work.sample_id}] "
+            f"Round {current_turn}, entering state: CORRECTNESS_CHECK"
+        )
+
+    if config.verbose:
+        print(f"[CORRECTNESS {work.problem_id}/{work.sample_id}] Requesting GPU...")
+
+    with orchestrator.reserve_gpu() as gpu_id:
+        if config.verbose:
+            print(
+                f"[CORRECTNESS {work.problem_id}/{work.sample_id}] "
+                f"Acquired GPU {gpu_id}"
+            )
+
+        # launch a separate process to do the GPU work, as each process
+        # creates a pytorch context on the GPU; we want to avoid each
+        # CPU worker having such a separate context that persists, so
+        # spawning a separate process will clear the cache when the
+        # process finishes
+        result_queue = mp.Queue()
+        proc = mp.Process(
+            target=evaluate_single_sample_src_mp,
+            args=(
+                state['ref_problem_src'],
+                conv_info.kernel_code[current_turn],
+                config,
+                state['build_dir'],
+                gpu_id,
+                config.timeout,
+                result_queue,
             ),
-            top_p=self.config.top_p,
-            top_k=self.config.top_k,
-            max_tokens=self.config.max_tokens,
-
-            # reasoning models
-            use_reasoning_model=self.config.reasoning_model, # claude, gpt, gemini
-            reasoning_effort=self.config.reasoning_effort, # gpt-5 only
-            budget_tokens=self.config.reasoning_budget_tokens, # claude
-
-            # server type
-            server_port=self.config.server_port,
-            server_address=self.config.server_address,
-            server_type=self.config.server_type,
-            model_name=self.config.model_name,
         )
-        self.llm_info.model_response[self.current_k] = model_response
-        self.llm_info.token_usage[self.current_k] = token_usage
+        start_time = time.time()
+        proc.start()
+        proc.join(timeout=config.timeout)
+        work_time = time.time() - start_time
 
-        kernel_code = extract_last_code(model_response, ["python", "cpp"])
-
-        # if we failed to generate a kernel, simply move to the next round
-        if kernel_code is None or len(kernel_code) == 0:
-            if self.config.verbose:
-                print(
-                    f"[GENERATE {self.work.problem_id}/{self.work.sample_id}] "
-                    "Failed to generate kernel code."
-                )
-            self.outcome = StateOutcome.GenerateFail
-        else:
-            self.llm_info.kernel_code[self.current_k] = kernel_code
-            self.outcome = StateOutcome.GenerateSuccess
-
-    def compile_logic(self):
-        """
-        Logic for the CPU compilation state.
-        """
-
-        # compile kernel and build cache
-        returncode, stdout, err = compile_single_sample(
-            kernel_src=self.llm_info.kernel_code[self.current_k],
-            config=self.config,
-            build_dir=self.build_dir,
-            timeout_seconds=self.compilation_timeout
-        )
-
-        if self.config.verbose:
-            print(f"[COMPILE {self.work.problem_id}/{self.work.sample_id}] Return code: {returncode}")
-            print(f"[COMPILE {self.work.problem_id}/{self.work.sample_id}] Compile stdout: {stdout}")
-            print(f"[COMPILE {self.work.problem_id}/{self.work.sample_id}] Compile stderr: {err}")
-
-        if returncode == 0:
-            # write partial eval result here, since compilation succeeded
-            # we'll write more later if doing correctness check
-            self.llm_info.eval_result[self.current_k] = kernel_eval.KernelExecResult(
-                compiled=True,
-                metadata={
-                    "hardware": "cpu",
-                    "device": "cpu",
-                }
+        if proc.is_alive():
+            # this means we reached timeout
+            proc.terminate()
+            print(
+                f"[CORRECTNESS {work.problem_id}/{work.sample_id}] "
+                f"Working on GPU {gpu_id} operation timed out."
             )
-            self.outcome = StateOutcome.CompileSuccess
-        else:
-            # register compilation failure as eval result
-            self.llm_info.eval_result[self.current_k] = kernel_eval.KernelExecResult(
+            state['state_outcome'] = StateOutcome.CorrectnessFail
+            conv_info.eval_result[current_turn] = kernel_eval.KernelExecResult(
                 compiled=False,
                 correctness=False,
                 metadata={
-                    "compiler_error": f"Compilation failed.\nstdout: {stdout}\nstderr: {err}",
-                    "hardware": "cpu",
-                    "device": "cpu"
+                    "timeout_error": "GPU timed out.",
+                    "hardware": "gpu",
+                    "device": f"cuda:{gpu_id}"
                 }
             )
-            self.outcome = StateOutcome.CompileFail
-
-    def correctness_check_logic(self):
-        """
-        Check kernel code correctness.
-        """
-        if self.config.verbose:
-            print(f"[CORRECTNESS {self.work.problem_id}/{self.work.sample_id}] Requesting GPU...")
-
-        with self.orchestrator.reserve_gpu() as gpu_id:
-            if self.config.verbose:
-                print(
-                    f"[CORRECTNESS {self.work.problem_id}/{self.work.sample_id}] "
-                    f"Acquired GPU {gpu_id}"
-                )
-
-            # launch a separate process to do the GPU work, as each process
-            # creates a pytorch context on the GPU; we want to avoid each
-            # CPU worker having such a separate context that persists, so
-            # spawning a separate process will clear the cache when the
-            # process finishes
-            result_queue = mp.Queue()
-            proc = mp.Process(
-                target=evaluate_single_sample_src_mp,
-                args=(
-                    self.ref_problem_src,
-                    self.llm_info.kernel_code[self.current_k],
-                    self.config,
-                    self.build_dir,
-                    gpu_id,
-                    self.correctness_check_timeout,
-                    result_queue,
-                ),
-            )
-            start_time = time.time()
-            proc.start()
-            proc.join(timeout=self.correctness_check_timeout)
-            work_time = time.time() - start_time
-
-            if proc.is_alive():
-                # this means we reached timeout
-                proc.terminate()
-                print(
-                    f"[CORRECTNESS {self.work.problem_id}/{self.work.sample_id}] "
-                    f"Working on GPU {gpu_id} operation timed out."
-                )
-                self.outcome = StateOutcome.CorrectnessFail
-                self.llm_info.eval_result[self.current_k] = kernel_eval.KernelExecResult(
-                    compiled=False,
-                    correctness=False,
-                    metadata={
-                        "timeout_error": "GPU timed out.",
-                        "hardware": "gpu",
-                        "device": f"cuda:{gpu_id}"
-                    }
-                )
-            else:
-                result = result_queue.get()
-
-                if self.config.verbose:
-                    print(
-                        f"[CORRECTNESS {self.work.problem_id}/{self.work.sample_id}] Result: ",
-                        result,
-                    )
-
-                # record result (fields should be correctly set)
-                self.llm_info.eval_result[self.current_k] = result
-
-                # if compiled and is correct
-                if result is not None and result.compiled and result.correctness:
-                    self.outcome = StateOutcome.CorrectnessSuccess
-                else:
-                    self.outcome = StateOutcome.CorrectnessFail
-
-                if self.config.verbose:
-                    print(
-                        f"[CORRECTNESS {self.work.problem_id}/{self.work.sample_id}] "
-                        f"Working on GPU {gpu_id} for {work_time:.2f} seconds"
-                    )
-
-            if self.config.verbose:
-                print(
-                    f"[CORRECTNESS {self.work.problem_id}/{self.work.sample_id}] "
-                    f"Released GPU {gpu_id}"
-                )
-
-    def performance_logic(self):
-        """
-        Logic for the performance state. This is for profiling code.
-        """
-
-        if self.config.verbose:
-            print(f"[PERF {self.work.problem_id}/{self.work.sample_id}] Requesting GPU...")
-
-        with self.orchestrator.reserve_gpu() as gpu_id:
-            if self.config.verbose:
-                print(f"[PERF {self.work.problem_id}/{self.work.sample_id}] Acquired GPU {gpu_id}")
-
-            # launch a separate process to do the GPU work, as each process
-            # creates a pytorch context on the GPU; we want to avoid each
-            # CPU worker having such a separate context that persists, so
-            # spawning a separate process will clear the cache when the
-            # process finishes
-            result_queue = mp.Queue()
-            proc = mp.Process(
-                target=get_torch_profiler_info_mp,
-                args=(
-                    self.ref_problem_src,
-                    self.llm_info.kernel_code[self.current_k],
-                    self.build_dir,
-                    gpu_id,
-                    result_queue,
-                ),
-            )
-            start_time = time.time()
-            proc.start()
-            proc.join() # wait forever for profiler
-            work_time = time.time() - start_time
+        else:
             result = result_queue.get()
 
-            self.llm_info.profiler_result[self.current_k] = result
-
-            if self.config.verbose:
+            if config.verbose:
                 print(
-                    f"[PERF {self.work.problem_id}/{self.work.sample_id}] "
+                    f"[CORRECTNESS {work.problem_id}/{work.sample_id}] Result: ",
+                    result,
+                )
+
+            # record result (fields should be correctly set)
+            conv_info.eval_result[current_turn] = result
+
+            # if compiled and is correct
+            if result is not None and result.compiled and result.correctness:
+                state['state_outcome'] = StateOutcome.CorrectnessSuccess
+            else:
+                state['state_outcome'] = StateOutcome.CorrectnessFail
+
+            if config.verbose:
+                print(
+                    f"[CORRECTNESS {work.problem_id}/{work.sample_id}] "
                     f"Working on GPU {gpu_id} for {work_time:.2f} seconds"
                 )
-                print(
-                    f"[PERF {self.work.problem_id}/{self.work.sample_id}] "
-                    f"Released GPU {gpu_id}"
-                )
 
-        self.outcome = StateOutcome.Performance
+        if config.verbose:
+            print(
+                f"[CORRECTNESS {work.problem_id}/{work.sample_id}] "
+                f"Released GPU {gpu_id}"
+            )
+    return state
 
-    def finish_turn_logic(self):
-        """
-        Logic for the finish state of a turn.
-        """
 
-        # this is reached at the end of each round; if the round, however,
-        # is not the LAST ROUND, we simply pass through to the next round's
-        # start state
+def performance_handler(state: CaesarGraphState) -> CaesarGraphState:
+    """
+    Logic for the performance state. This is for profiling code.
+    """
+    config = state['config']
+    orchestrator = state['orchestrator']
+    work = state['work']
+    current_turn = state['current_turn']
+    conv_info = state['conversation_info']
 
-        # save the current round's state
-        self.logger.update_turn_and_log(self.current_k, self.llm_info)
+    if config.show_state:
+        print(
+            f"[STATEMACHINE {work.problem_id}/{work.sample_id}] "
+            f"Round {current_turn}, entering state: PROFILING"
+        )
 
-        # increment round number
-        self.outcome = StateOutcome.Finish
-        self.current_k += 1
+    if config.verbose:
+        print(f"[PERF {work.problem_id}/{work.sample_id}] Requesting GPU...")
 
-        # IF last round, mark that this run is finished
-        if self.current_k > self.max_k:
-            if self.config.verbose:
-                print(
-                    f"[FINISH {self.work.problem_id}/{self.work.sample_id}] "
-                    "Finished run, writing DONE file"
-                )
-            with open(os.path.join(self.logger.log_dir, "DONE"), "w") as _:
-                pass
+    with orchestrator.reserve_gpu() as gpu_id:
+        if config.verbose:
+            print(f"[PERF {work.problem_id}/{work.sample_id}] Acquired GPU {gpu_id}")
+
+        # launch a separate process to do the GPU work, as each process
+        # creates a pytorch context on the GPU; we want to avoid each
+        # CPU worker having such a separate context that persists, so
+        # spawning a separate process will clear the cache when the
+        # process finishes
+        result_queue = mp.Queue()
+        proc = mp.Process(
+            target=get_torch_profiler_info_mp,
+            args=(
+                state['ref_problem_src'],
+                conv_info.kernel_code[current_turn],
+                state['build_dir'],
+                gpu_id,
+                result_queue,
+            ),
+        )
+        start_time = time.time()
+        proc.start()
+        proc.join() # wait forever for profiler
+        work_time = time.time() - start_time
+        result = result_queue.get()
+
+        conv_info.profiler_result[current_turn] = result
+
+        if config.verbose:
+            print(
+                f"[PERF {work.problem_id}/{work.sample_id}] "
+                f"Working on GPU {gpu_id} for {work_time:.2f} seconds"
+            )
+            print(
+                f"[PERF {work.problem_id}/{work.sample_id}] "
+                f"Released GPU {gpu_id}"
+            )
+
+    state['state_outcome'] = StateOutcome.Performance
+    return state
+
+
+def finish_turn_handler(state: CaesarGraphState) -> CaesarGraphState:
+    """
+    Logic for the finish state of a turn.
+    """
+    config = state['config']
+    logger = state['logger']
+    work = state['work']
+    current_turn = state['current_turn']
+    conv_info = state['conversation_info']
+
+    if config.show_state:
+        print(
+            f"[STATEMACHINE {work.problem_id}/{work.sample_id}] "
+            f"Round {current_turn}, entering state: FINISH"
+        )
+
+    # this is reached at the end of each round; if the round, however,
+    # is not the LAST ROUND, we simply pass through to the next round's
+    # start state
+
+    # save the current round's state
+    logger.update_turn_and_log(current_turn, conv_info)
+
+    # increment round number
+    state['current_turn'] += 1
+    state['state_outcome'] = StateOutcome.NextTurn
+
+    # IF last round, mark that this run is finished
+    if current_turn > config.max_turn:
+        if config.verbose:
+            print(
+                f"[FINISH {work.problem_id}/{work.sample_id}] "
+                "Finished run, writing DONE file"
+            )
+        with open(os.path.join(logger.log_dir, "DONE"), "w") as _:
+            pass
+        state['state_outcome'] = StateOutcome.EndRun
+
+    return state
+
+
+def _init_state_machine_graph() -> CompiledStateGraph:
+    """
+    Initialize langgraph state graph.
+    """
+    # set up langgraph state and graph transitions
+    builder = StateGraph(CaesarGraphState)
+
+    # init
+    builder.add_node('setup_state_machine_handler', setup_state_machine_handler)
+
+    # actual machine states
+    builder.add_node('create_prompt_handler', create_prompt_handler)
+    builder.add_node('query_llm_handler', query_llm_handler)
+    builder.add_node('compile_handler', compile_handler)
+    builder.add_node('correctness_check_handler', correctness_check_handler)
+    builder.add_node('performance_handler', performance_handler)
+    builder.add_node('finish_turn_handler', finish_turn_handler)
+
+    # transitions
+    builder.add_edge(START, 'setup_state_machine_handler')
+
+    builder.add_conditional_edges(
+        'setup_state_machine_handler',
+        lambda state: state['state_outcome'],
+        {
+            StateOutcome.SetupDone: 'create_prompt_handler',
+            StateOutcome.SetupFinishRun: END
+        }
+    )
+    builder.add_edge('create_prompt_handler', 'query_llm_handler')
+    # TODO should be more complex,
+    # i.e. if the user doesn't want a compile phase, move to
+    # finish_handler (this is to emulate the transitions); can as well
+    # just leave it out if i'll always just run this anyway
+    builder.add_conditional_edges(
+        'query_llm_handler',
+        lambda state: state['state_outcome'],
+        {
+            StateOutcome.GenerateSuccess: 'compile_handler',
+            StateOutcome.GenerateFail: 'finish_turn_handler'
+        }
+    )
+    builder.add_conditional_edges(
+        'compile_handler',
+        lambda state: state['state_outcome'],
+        {
+            StateOutcome.CompileSuccess: 'correctness_check_handler',
+            StateOutcome.CompileFail: 'finish_turn_handler'
+        }
+    )
+    builder.add_conditional_edges(
+        'correctness_check_handler',
+        lambda state: state['state_outcome'],
+        {
+            StateOutcome.CorrectnessSuccess: 'performance_handler',
+            StateOutcome.CorrectnessFail: 'finish_turn_handler'
+        }
+    )
+    builder.add_edge('performance_handler', 'finish_turn_handler')
+    builder.add_conditional_edges(
+        'finish_turn_handler',
+        lambda state: state['state_outcome'],
+        {
+            StateOutcome.NextTurn: 'create_prompt_handler',
+            StateOutcome.EndRun: END
+        }
+    )
+
+    # compile graph
+    graph = builder.compile()
+
+    # save an image of the graph's state
+    # graph.get_graph().draw_mermaid_png(output_file_path='state_machine_graph.png')
+    return graph
+
+
+def init_and_run_graph(
+    config: CaesarRunConfig,
+    work: WorkArgs,
+    process_id: int,
+    orchestrator: GPUOrchestrator,
+    progress: mp.Value,
+    worker_semaphore: mp.Semaphore,
+):
+    try:
+
+        # build graph
+        graph = _init_state_machine_graph()
+
+        # initialize state setup
+        initial_state: CaesarGraphState = {
+            'process_id': process_id,
+            'config': config,
+            'work': work,
+            'logger': CaesarLogger(
+                os.path.join(
+                    config.log_dir_prefix,
+                    config.run_group,
+                    config.run_name,
+                    work.get_log_path(),
+                ),
+            ),
+            # build dir to cache compiled problems
+            'build_dir': os.path.join(
+                config.build_dir_prefix,
+                config.run_group,
+                config.run_name,
+                work.get_log_path(),
+            ),
+            'orchestrator': orchestrator,
+            'conversation_info': ConversationInfo(),
+
+            'current_turn': 1,
+            'state_outcome': StateOutcome.EndRun,
+
+            # contains the reference problem in Python code as a string
+            # load it from KernelBench repo
+            'ref_problem_src': read_file(work.problem_path),
+        }
+
+        # launch graph
+        graph.invoke(initial_state, {"recursion_limit": 1000})
+
+    finally:
+        worker_semaphore.release()
+
+        # update global progress (for each finished sample)
+        with progress.get_lock():
+            progress.value += 1
+
+
+def run_state_machine(
+    process_id: int,
+    config: CaesarRunConfig,
+    workargs: WorkArgs,
+    orchestrator: GPUOrchestrator,
+    progress: mp.Value,
+    worker_semaphore: mp.Semaphore,
+):
+    # TODO depending on what I eventually want to do (e.g. best of k
+    # kernel), the following code should change; the simple and
+    # sensible thing to do is to run a turn, and then return control to
+    # this state machine; after that, this state machine can take a
+    # decision on whether it should exchange information between
+    # trajectories or not etc.
+
+    # log config with initial params
+    Path(config.log_dir_prefix).mkdir(parents=True, exist_ok=True)
+    with open(os.path.join(config.log_dir_prefix, 'config.json'), 'w') as f:
+        json.dump(ensure_json_serializable(config.to_dict()), f, indent=2)
+
+    # launch all samples on different sub-processes and wait for completion
+    sample_proc_list = []
+    for sample in range(0, config.num_samples):
+
+        worker_semaphore.acquire()
+
+        # create separate work for each sample
+        work = copy.deepcopy(workargs)
+        work.sample_id = sample
+
+        if config.verbose:
+            print(f"State machine worker {os.getpid()} starting work {work}")
+
+        sample_proc = mp.Process(
+            target=init_and_run_graph,
+            args=(config, work, process_id, orchestrator, progress, worker_semaphore),
+        )
+        sample_proc.start()
+        sample_proc_list.append(sample_proc)
+
+    # wait for processes to finish
+    for sample_proc in sample_proc_list:
+        sample_proc.join()
+
+        if config.verbose:
+            print(f"State machine worker {os.getpid()} finished work {work}")

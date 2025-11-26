@@ -1,6 +1,5 @@
 import os
 import time
-import queue
 import multiprocessing as mp
 
 import torch
@@ -21,10 +20,8 @@ from KernelBenchInternal.dataset import (
 )
 
 
-from state_machine import CaesarStateMachine
+from state_machine import run_state_machine
 from work import WorkArgs
-from custom_transitions import InferenceAndGPUAndProfilerTransition
-from logger import CaesarLogger
 from caesar_config import CaesarRunConfig
 from orchestrator import GPUOrchestrator
 
@@ -51,106 +48,20 @@ dataset_name_to_dataset = {
 }
 
 
-def create_work_queue(
-    dataset: KernelBenchDataset,
-    config: CaesarRunConfig,
-) -> mp.Queue:
-    """
-    Create a work queue of processes.
-    """
-
-    # create work list; these are the problems to be solved
-    work_list = []
-    for problem_id in dataset.get_problem_ids():
-        for sample_id in range(1, config.num_samples + 1):
-            workargs = WorkArgs(problem_id=problem_id, sample_id=sample_id, problem_path="")
-            workargs.problem_path = dataset.get_problem_path_by_id(workargs.problem_id)
-
-            work_list.append(workargs)
-
-    if config.verbose:
-        print(f"Created {len(work_list)} problems to solve")
-
-    # add these to a global work queue across workers
-    work_queue = mp.Queue()
-    for work in work_list:
-        work_queue.put(work)
-
-    return work_queue
-
-
-def init_and_run_single_sample_work(
+def launch_state_machine_process(
     config: CaesarRunConfig,
     orchestrator: GPUOrchestrator,
-    workargs: WorkArgs,
-) -> None:
-    """
-    Create the work object for a single problem, for a single sample, and
-    run the state machine.
-    Initializes the work args, a logger and a state machine.
-    """
-
-    transition = InferenceAndGPUAndProfilerTransition()
-
-    logger = CaesarLogger(
-        os.path.join(
-            config.log_dir_prefix,
-            config.run_group,
-            config.run_name,
-            workargs.get_log_path(),
-        ),
-        config,
-        workargs,
-    )
-
-    stm = CaesarStateMachine(
-        transition,
-        config,
-        workargs,
-        logger,
-        process_id=os.getpid(),
-        orchestrator=orchestrator,
-    )
-    stm.run()
-
-
-def launch_worker_process(
-    config: CaesarRunConfig,
-    orchestrator: GPUOrchestrator,
-    proc_queue: mp.Queue,
+    work: WorkArgs,
     progress: mp.Value,
+    proc_sem: mp.Semaphore,
 ) -> None:
     """
-    Launch a worker process. This is meant to be launched in a multiprocessing
-    context. Each worker will get work from the passed queue, and will execute
-    it. If the queue is empty, return.
+    Launch a state machine process. This is meant to be launched in a
+    multiprocessing context. Each worker works on a problem, with all its
+    samples.
     """
-
-    while True:
-        try:
-            work = proc_queue.get(block=True, timeout=1) # timeout means empty queue
-
-            if config.verbose:
-                print(f"CPU worker {os.getpid()} starting work {work}")
-
-            # create and launch process
-            work_proc = mp.Process(
-                    target=init_and_run_single_sample_work,
-                    args=(config, orchestrator, work)
-            )
-            work_proc.start()
-            work_proc.join()
-
-            # update global progress
-            with progress.get_lock():
-                progress.value += 1
-
-            if config.verbose:
-                print(f"CPU worker {os.getpid()} finished work {work}")
-
-        except queue.Empty:
-            # finished work, queue is empty
-            break
+    # launch state machine
+    run_state_machine(os.getpid(), config, work, orchestrator, progress, proc_sem)
 
 
 @pydra.main(base=CaesarRunConfig)
@@ -177,48 +88,57 @@ def main(config: CaesarRunConfig):
         dataset_name_to_dataset.get(config.dataset_name, "KernelBench/level1")
     )
 
+    if config.verbose:
+        print(f"There are {len(dataset) * config.num_samples} total samples to solve")
+
     # global, for all problems
     orchestrator = GPUOrchestrator(
-        num_gpus=torch.cuda.device_count(), verbose=config.verbose
+        num_gpus=config.num_gpus, verbose=config.verbose
     )
-
-    # global work queue
-    work_queue = create_work_queue(dataset, config)
 
     # track global problem progress
     progress = mp.Value('i', 0, lock=True)
 
-    # launch CPU workers
-    workers_list = []
-    for worker in range(min(config.num_workers, len(dataset))):
-        worker_proc = mp.Process(
-            target=launch_worker_process,
-            args=(config, orchestrator, work_queue, progress),
-        )
+    # semaphore to limit process launching (this only applies to each state
+    # machine launching sub-processes to solve samples)
+    proc_sem = mp.Semaphore(value=config.num_workers)
 
-        if config.verbose:
-            print(f"Starting CPU worker with PID {worker_proc.name}")
+    # launch state machine workers, 1 per problem
+    workers_list = []
+    for problem_id in dataset.get_problem_ids():
+
+        # create work args
+        workargs = WorkArgs(
+            problem_id=problem_id,
+            sample_id=-1,
+            problem_path="",
+        )
+        workargs.problem_path = dataset.get_problem_path_by_id(workargs.problem_id)
+
+        # launch state machine process
+        worker_proc = mp.Process(
+            target=launch_state_machine_process,
+            args=(config, orchestrator, workargs, progress, proc_sem),
+        )
 
         worker_proc.start()
         workers_list.append(worker_proc)
 
     # tqdm progress tracker
     with tqdm(
-        total=work_queue.qsize(),
-        desc="Overall progress",
+        total=len(dataset) * config.num_samples,
+        desc="Overall progress (per sample)",
         miniters=1,
     ) as pbar:
-        while not work_queue.empty():
+        while pbar.n != len(dataset) * config.num_samples:
             time.sleep(1)
             with progress.get_lock():
                 pbar.update(progress.value)
                 progress.value = 0
 
-    # wait for all CPU workers to finish
+    # wait for all state machine workers to finish
     for worker_proc in workers_list:
         worker_proc.join()
-        if config.verbose:
-            print(f"CPU worker {worker_proc.name} finished")
 
 
 if __name__ == '__main__':

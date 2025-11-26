@@ -5,6 +5,7 @@ from enum import Enum
 # strategy = { SHOW_INLINE_SYNTAX, PROFILER_FEEDBACK }
 # if SHOW_INLINE_SYNTAX in strategy:
 #   # do something
+# TODO just use config stuff
 class Strategy(Enum):
     # whether to include CUDA syntax example in the prompt
     SHOW_INLINE_SYNTAX = "show_inline_cuda_syntax"

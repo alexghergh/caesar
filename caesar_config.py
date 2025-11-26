@@ -14,7 +14,7 @@ class CaesarRunConfig(Config):
         self.num_samples = 1 # samples to generate per problem
                              # essentially parallel scaling with no connections
                              # between directions for now
-        self.max_k = 10 # multi-turn
+        self.max_turn = 10 # multi-turn
 
         # LLM configs
         self.model_name = REQUIRED
@@ -26,13 +26,13 @@ class CaesarRunConfig(Config):
         self.greedy_sample = False
         self.temperature = 0.0
         self.top_p = 1.0
-        self.top_k = 50
+        self.top_k = 50 # doesn't work with all servers
         self.max_tokens = 4096
 
         # reasoning models setup
         self.reasoning_model = False
         self.reasoning_effort = '' # gpt-5 only; can be 'low', 'high', 'medium'
-        self.reasoning_budget_tokens = 0 # claude models only; if 0, set to max_tokens / 2
+        self.reasoning_budget_tokens = 0 # claude models only; if 0, set to 4096
 
         # strategy for prompting; see strategy.py
         self.prompt_strategy = REQUIRED # set on CLI with e.g. prompt_strategy='["SHOW_INLINE_SYNTAX", "COMPILER_FEEDBACK"]'
@@ -88,7 +88,6 @@ class CaesarRunConfig(Config):
     #    self.model_name = "meta-llama/Meta-Llama-3.1-70B-Instruct-Turbo"  # check this
     #    self.server_type = "together"
     #    self.temperature = 0.7
-    #    self.max_tokens = 8192
 
     # local
     #    self.server_type = "sglang"

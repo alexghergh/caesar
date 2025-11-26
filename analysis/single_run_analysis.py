@@ -112,7 +112,7 @@ def get_overall_best_runtime_for_problem(run_path: str,
     overall_runtimes = []
     for problem_id in problem_ids:
         best_runtime = float('inf')
-        for sample_id in range(1, num_samples + 1):
+        for sample_id in range(num_samples):
             curr_runtimes_up_to_k = get_eval_results_up_to_k(
                 run_path = run_path,
                 problem_id=problem_id,
@@ -145,7 +145,7 @@ def get_overall_mean_runtime_for_problem(run_path: str,
     for problem_id in problem_ids:
         runtimes = []
         count = 0
-        for sample_id in range(1, num_samples + 1):
+        for sample_id in range(num_samples):
             curr_runtimes_up_to_k = get_eval_results_up_to_k(
                 run_path = run_path,
                 problem_id=problem_id,
@@ -233,7 +233,7 @@ def compute_input_tokens(run_path: str,
                          problem_ids: list[int]) -> int:
     count = 0
     for problem_id in problem_ids:
-        for sample_id in range(1, num_samples + 1):
+        for sample_id in range(num_samples):
             log_data = load_json_data(os.path.join(run_path,
                                                    f"problem_{problem_id}",
                                                    f"sample_{sample_id}",
@@ -251,7 +251,7 @@ def compute_output_tokens(run_path: str,
                           problem_ids: list[int]) -> int:
     count = 0
     for problem_id in problem_ids:
-        for sample_id in range(1, num_samples + 1):
+        for sample_id in range(num_samples):
             log_data = load_json_data(os.path.join(run_path,
                                                    f"problem_{problem_id}",
                                                    f"sample_{sample_id}",
@@ -281,7 +281,7 @@ def main():
         "baseline_time_torch.json",
     )
 
-    max_k = 4 # modify this to get best/mean@k, where k doesn't have to be max_k
+    max_k = 8 # modify this to get best/mean@k, where k doesn't have to be max_k
     samples = 4
 
     ## There's a number of interesting statistics that we want

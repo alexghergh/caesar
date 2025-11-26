@@ -4,7 +4,7 @@ from dataclasses import dataclass
 
 @dataclass
 class WorkArgs:
-    """Current problem the state machine iterates on."""
+    """Current problem and sample the state machine iterates on."""
     problem_id: int
     sample_id: int
     problem_path: str

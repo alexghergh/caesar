@@ -6,8 +6,8 @@ import traceback
 from pathlib import Path
 
 from fasthtml.common import (
-    HighlightJS, MarkdownJS, fast_app, serve, Script, Div, Span, Details, Summary, Pre, P, A, H2, Code,
-    Table, Tr, Th, Td, Br
+    HighlightJS, MarkdownJS, fast_app, serve, Script, Div, Span, Details,
+    Summary, Pre, P, A, H2, Code, Table, Tr, Th, Td
 )
 from KernelBenchInternal.dataset import (
     KernelBenchDataset,
@@ -27,6 +27,8 @@ from utils import (
     get_run_group_finished_runs,
     get_prev_problem_id,
     get_next_problem_id,
+    get_turn_input_tokens,
+    get_turn_output_tokens,
     load_json_data,
     get_turn_trajectory_overviews,
     fetch_baseline_time_by_problem_id,
@@ -57,30 +59,6 @@ PORT = 5008
 HOST_IP = 'localhost'
 app, rt = fast_app(hdrs=(MarkdownJS(), HighlightJS(langs=['python'])))
 
-## various helpers
-
-def _get_input_tokens(turn_data):
-    toks = 0
-
-    # anthropic
-    toks += int(turn_data.get("token_usage", {}).get("input_tokens", 0))
-
-    # sglang
-    toks += int(turn_data.get("token_usage", {}).get("prompt_tokens", 0))
-
-    return toks
-
-def _get_output_tokens(turn_data):
-    toks = 0
-
-    # anthropic
-    toks += int(turn_data.get("token_usage", {}).get("output_tokens", 0))
-
-    # sglang
-    toks += int(turn_data.get("token_usage", {}).get("completion_tokens", 0))
-
-    return toks
-
 
 @rt('/')
 def get(run_group: str, run_name: str, problem_id: str, sample_id: str):
@@ -108,7 +86,7 @@ def get(run_group: str, run_name: str, problem_id: str, sample_id: str):
                     f"run_group={run_group}&"
                     f"run_name={run_name}&"
                     f"problem_id={get_prev_problem_id(problems, int(problem_id))}&"
-                    f"sample_id={sample_id}"
+                    f"sample_id=0"
             ),
             style=(
                 "display:inline-block;"
@@ -133,7 +111,7 @@ def get(run_group: str, run_name: str, problem_id: str, sample_id: str):
                     f"run_group={run_group}&"
                     f"run_name={run_name}&"
                     f"problem_id={get_next_problem_id(problems, int(problem_id))}&"
-                    f"sample_id={sample_id}"
+                    f"sample_id=0"
             ),
             style=(
                 "display:inline-block;"
@@ -214,7 +192,8 @@ def get(run_group: str, run_name: str, problem_id: str, sample_id: str):
     ui_elements.append(problem_navigation_buttons)
     ui_elements.append(sample_navigation_buttons)
 
-    sample_base_dir = os.path.join(BASE_LOG_DIR, run_group, run_name, f"problem_{problem_id}", f"sample_{sample_id}")
+    base_dir = os.path.join(BASE_LOG_DIR, run_group, run_name)
+    sample_base_dir = os.path.join(base_dir, f"problem_{problem_id}", f"sample_{sample_id}")
 
     if not os.path.exists(os.path.join(sample_base_dir, "DONE")):
         not_found_content = Div(
@@ -245,12 +224,12 @@ def get(run_group: str, run_name: str, problem_id: str, sample_id: str):
         return ui_elements
 
     try:
+        config_path = os.path.join(base_dir, "config.json")
         log_path = os.path.join(sample_base_dir, "log.json")
-        config_path = os.path.join(sample_base_dir, "config.json")
 
-        log_data = load_json_data(log_path)
         config_data = load_json_data(config_path)
-        max_turns = config_data["max_k"]
+        log_data = load_json_data(log_path)
+        max_turns = config_data["max_turn"]
         dataset = KernelBenchDataset(
             dataset=dataset_name_to_dataset.get(
                 config_data["dataset_name"], "KernelBench/level1"
@@ -463,9 +442,9 @@ def get(run_group: str, run_name: str, problem_id: str, sample_id: str):
         # get the token usage
         total_input_tokens = 0
         total_output_tokens = 0
-        for idx, turn_data in log_data.items():
-            total_input_tokens += _get_input_tokens(turn_data)
-            total_output_tokens += _get_output_tokens(turn_data)
+        for _, turn_data in log_data.items():
+            total_input_tokens += get_turn_input_tokens(turn_data)
+            total_output_tokens += get_turn_output_tokens(turn_data)
 
         performance_content = Div(
             H2("Evaluation Results", style="margin-top: 0; margin-bottom: 10px;"),
@@ -619,7 +598,7 @@ def get(run_group: str, run_name: str, problem_id: str, sample_id: str):
                         ),
                         Pre(
                             Code(
-                                turn_data["prompt"],
+                                turn_data["input_prompt"],
                                 style=(
                                     "white-space: pre-wrap;"
                                     "background-color: #f8f8f8;"
