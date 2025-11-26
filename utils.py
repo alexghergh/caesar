@@ -244,6 +244,30 @@ def fetch_baseline_time_by_problem_id(
     assert False, f"Problem {problem_id} not found in baseline time file."
 
 
+def get_turn_input_tokens(turn_data) -> int:
+    toks = 0
+
+    # anthropic
+    toks += int(turn_data.get("token_usage", {}).get("input_tokens", 0))
+
+    # sglang
+    toks += int(turn_data.get("token_usage", {}).get("prompt_tokens", 0))
+
+    return toks
+
+
+def get_turn_output_tokens(turn_data) -> int:
+    toks = 0
+
+    # anthropic
+    toks += int(turn_data.get("token_usage", {}).get("output_tokens", 0))
+
+    # sglang
+    toks += int(turn_data.get("token_usage", {}).get("completion_tokens", 0))
+
+    return toks
+
+
 ###########################
 # Prompt construction
 ###########################

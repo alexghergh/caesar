@@ -1,64 +1,64 @@
-
-"""
-Analyze at a particular run 
-of multi-turn caesar runs
-to get the fast_p score
-"""
+import os
+import sys
 
 import numpy as np
-import pandas as pd
-import matplotlib.pyplot as plt
-import os, sys
-import json
 
-from utils.score import *
+from KernelBenchInternal.score import fastp
+from KernelBenchInternal.dataset import (
+    KernelBenchDataset,
+    KERNELBENCH_LEVEL_1_DATASET, KERNELBENCH_LEVEL_1_SUBSET_DATASET,
+    KERNELBENCH_LEVEL_2_DATASET, KERNELBENCH_LEVEL_2_SUBSET_DATASET,
+    KERNELBENCH_LEVEL_3_DATASET, KERNELBENCH_LEVEL_3_SUBSET_DATASET,
+)
 
-import caesar.analysis.analysis_utils as analysis_utils
+# get root caesar directory (i.e., the parent of 'analysis')
+ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 
-from caesar.utils import check_result_exists_run_path
+# add sys paths (needed for python import discovery)
+sys.path.append(ROOT_DIR)
 
-PATH_TO_REPO_DIR = os.path.join(os.path.dirname(__file__), "..", "..")
-
-########################################################
-#
-# We want to get the fast_1 score of the best solution up to turn k
-# we want to understand the fast_1 score of the best solution up to turn k
-
-# For each the problem
-# 1. grab all the eval results up to turn k
-# 2. get the best
-
-# and then compute fast_p score across all the problems
-
-########################################################
-
-LOG_DIR_PREFIX = "/matx/u/simonguo/kernel_multi_turn"
+from utils import (
+    get_turn_input_tokens,
+    get_turn_output_tokens,
+    load_json_data,
+    fetch_baseline_time_by_problem_id,
+)
 
 
-def grab_eval_results_at_k(run_path: str, 
-                              problem_id: int, 
-                              sample_id: int, 
-                              k: int) -> float:
-    """
-    We need the path to the log.json
-    """
-    # if not check_result_exists_run_path(run_path, problem_id, sample_id):
-    #     print(f"WARNING: run_path {run_path} does not exist for problem {problem_id} sample {sample_id}")
-    #     return -1 # TODO CHECK THIS
-    
+# timing result to compare against
+TIMING_BASELINE = "H100_tsubame"
+
+BASE_LOG_DIR = os.path.join(ROOT_DIR, "caesar_log_dir")
+KERNEL_BENCH_PATH = os.path.join(ROOT_DIR, "..", "KernelBench")
+
+dataset_name_to_dataset = {
+    "KernelBench/level1": KERNELBENCH_LEVEL_1_DATASET,
+    "KernelBench/level2": KERNELBENCH_LEVEL_2_DATASET,
+    "KernelBench/level3": KERNELBENCH_LEVEL_3_DATASET,
+    "KernelBench/level1-subset": KERNELBENCH_LEVEL_1_SUBSET_DATASET,
+    "KernelBench/level2-subset": KERNELBENCH_LEVEL_2_SUBSET_DATASET,
+    "KernelBench/level3-subset": KERNELBENCH_LEVEL_3_SUBSET_DATASET,
+
+    # debug
+    "KernelBench/level1-test": [
+        os.path.join(KERNEL_BENCH_PATH, "KernelBench", "level1", "23_Softmax.py")
+    ],
+}
+
+
+def get_eval_results_at_k(run_path: str,
+                          problem_id: int,
+                          sample_id: int,
+                          k: int) -> float:
     log_path = os.path.join(run_path, f"problem_{problem_id}", f"sample_{sample_id}", "log.json")
-    log_json = analysis_utils.load_run_data(log_path)
+    log_json = load_json_data(log_path)
 
-    # check the problem_id and sample_id matches
-    assert str(log_json["metadata"]["problem_id"]) == str(problem_id), f"Problem ID mismatch: {log_json['metadata']['problem_id']} != {problem_id}"
-    assert str(log_json["metadata"]["sample_id"]) == str(sample_id), f"Sample ID mismatch: {log_json['metadata']['sample_id']} != {sample_id}"
-    
-    # get the eval results atturn k
+    # get the eval results at turn k
     turn_num = k
     if str(turn_num) not in log_json:
         print(f"WARNING: turn {turn_num} not found in log for problem {problem_id} sample {sample_id}")
         return -1
-    
+
     else:
         if "eval_result" not in log_json[str(turn_num)]:
             print(f"WARNING: eval_result not found in log for turn {turn_num} for problem {problem_id} sample {sample_id}")
@@ -66,197 +66,265 @@ def grab_eval_results_at_k(run_path: str,
         else:
             runtime = log_json[str(turn_num)]["eval_result"]["runtime"]
             return runtime
-            
 
 
-def grab_eval_results_up_to_k(run_path: str, 
-                              problem_id: int, 
-                              sample_id: int, 
-                              k: int) -> list[float]:
-    """
-    We need the path to the log.json
-    """
-    # if not check_result_exists_run_path(run_path, problem_id, sample_id):
-    #     print(f"WARNING: Run {run_path} DID NOT FINISH for problem {problem_id} sample {sample_id}")
-    #     return [-1]*k # TODO CHECK THIS
-
+def get_eval_results_up_to_k(run_path: str,
+                             problem_id: int,
+                             sample_id: int,
+                             k: int) -> list[float]:
     log_path = os.path.join(run_path, f"problem_{problem_id}", f"sample_{sample_id}", "log.json")
-    log_json = analysis_utils.load_run_data(log_path)
+    log_json = load_json_data(log_path)
 
-    # check the problem_id and sample_id matches
-    assert str(log_json["metadata"]["problem_id"]) == str(problem_id), f"Problem ID mismatch: {log_json['metadata']['problem_id']} != {problem_id}"
-    assert str(log_json["metadata"]["sample_id"]) == str(sample_id), f"Sample ID mismatch: {log_json['metadata']['sample_id']} != {sample_id}"
-
-    # just clean up eval result
-    # we get a eval_time (list) of length k
-    
     runtime_up_to_k = []
-    
+
     # get the eval results up to turn k
     for turn_num in range(1, k + 1):
         if str(turn_num) not in log_json:
             print(f"WARNING: turn {turn_num} not found in log for problem {problem_id} sample {sample_id}")
             runtime_up_to_k.append(-1)
-        
         else:
             if "eval_result" not in log_json[str(turn_num)]:
                 print(f"WARNING: eval_result not found in log for turn {turn_num} for problem {problem_id} sample {sample_id}")
                 runtime_up_to_k.append(-1)
             else:
-                runtime = log_json[str(turn_num)]["eval_result"]["runtime"]
+                runtime = log_json[str(turn_num)]["eval_result"].get("runtime", -1.0)
                 runtime_up_to_k.append(runtime)
-                       
+
     return runtime_up_to_k
 
-def get_best_solution(sol: list[float]) -> float | None:
-    """
-    For a single problem, we find the best solution up to turn k
-    # if there is multiple thigs that are correct, we pick the best one
-    # if there is only one correct, we use that one
-    # if there is no correct, no correct
-    """
+
+def get_best_solution(solutions: list[float]) -> float | None:
     m = None
-    for s in sol:
+    for s in solutions:
         if s == -1: # skip if it is not correct
             continue
         if m is None:
             m = s
         else:
-            m = min(m,s)
-    return m  
+            m = min(m, s)
+    return m
 
 
-def get_overall_runtime(run_path: str, 
-                        turn_k: int,
-                        num_problems: int = 100):
-    """
-    For a single run, we compute the runtime across all the problems
-    """
-
-    # do this for all the problems
-    problem_ids = range(1, num_problems + 1) # for level 1
-
-    overall_runtime = [] # this should be 
+def get_overall_best_runtime_for_problem(run_path: str,
+                                         max_k: int,
+                                         num_samples: int,
+                                         problem_ids: list[int]) -> list[float | None]:
+    overall_runtimes = []
     for problem_id in problem_ids:
-        # 
-        curr_runtime_up_to_k = grab_eval_results_up_to_k(
-            run_path=run_path,    
-            problem_id=problem_id, 
-            sample_id=0, 
-            k=turn_k)
-        
-        assert len(curr_runtime_up_to_k) == turn_k, f"Expected {turn_k} runtime results for problem {problem_id}, got {len(curr_runtime_up_to_k)}"
+        best_runtime = float('inf')
+        for sample_id in range(1, num_samples + 1):
+            curr_runtimes_up_to_k = get_eval_results_up_to_k(
+                run_path = run_path,
+                problem_id=problem_id,
+                sample_id=sample_id,
+                k=max_k,
+            )
 
-        best_runtime = get_best_solution(curr_runtime_up_to_k)
+            best_curr_runtime = get_best_solution(curr_runtimes_up_to_k)
+            if best_curr_runtime is not None and best_curr_runtime < best_runtime:
+                best_runtime = best_curr_runtime
 
-        if best_runtime is None: # this means it is not correct
-            # print(f"WARNING: No correct solutions found for problem {problem_id}")
-            overall_runtime.append(None) # this means no correct solutions were found
+        if best_runtime is None:
+            overall_runtimes.append(None) # no correct solutions found
         else:
-            overall_runtime.append(best_runtime)
-        
-    return overall_runtime
+            overall_runtimes.append(best_runtime)
+
+    return overall_runtimes
+
+
+def get_overall_mean_runtime_for_problem(run_path: str,
+                                         max_k: int,
+                                         num_samples: int,
+                                         problem_ids: list[int]) -> list[float | None]:
+    """
+    Results for mean@k results, meaning that the mean runtime is returned,
+    instead of the best runtime. This somewhat tells whether the model got lucky
+    with a good kernel or if it consistently generated good kernels.
+    """
+    overall_runtimes = []
+    for problem_id in problem_ids:
+        runtimes = []
+        count = 0
+        for sample_id in range(1, num_samples + 1):
+            curr_runtimes_up_to_k = get_eval_results_up_to_k(
+                run_path = run_path,
+                problem_id=problem_id,
+                sample_id=sample_id,
+                k=max_k,
+            )
+
+            for s in curr_runtimes_up_to_k:
+                if s == -1:
+                    continue
+                runtimes.append(s)
+                count += 1
+
+        if len(runtimes) == 0:
+            overall_runtimes.append(None) # no correct solutions found
+        else:
+            overall_runtimes.append(sum(runtimes) / count)
+
+    return overall_runtimes
+
 
 def compute_fast_p_score(overall_runtime: list[float | None],
                          baseline_torch_time_filepath: str,
                          level: int,
-                         num_problems: int = 100,
+                         problem_ids: list[int],
                          p: float = 1.0) -> float:
-    """
-    Compute the fast_p score
-    """
     # get the baseline time array
     baseline_time_array = []
-    for problem_id in range(1, num_problems + 1):
-        curr_problem_baseline_time = analysis_utils.fetch_baseline_time_by_problem_id(level=level,
-                                                                                      problem_id=problem_id,
-                                                                                      baseline_time_filepath=baseline_torch_time_filepath).get("mean", None)
+    for problem_id in problem_ids:
+        curr_problem_baseline_time = fetch_baseline_time_by_problem_id(level=level,
+                                                                       problem_id=problem_id,
+                                                                       baseline_time_filepath=baseline_torch_time_filepath).get("mean", None)
         baseline_time_array.append(curr_problem_baseline_time)
-    
+
     return fastp(is_correct=np.array([x is not None for x in overall_runtime]),
-        baseline_speed=np.array(baseline_time_array),
-        actual_speed=np.array(overall_runtime),
-        n=num_problems,
-        p=p)
-
-def compute_fast_1_score(overall_runtime: list[float | None],
-                         baseline_torch_time_filepath: str,
-                         level: int,
-                         num_problems: int = 100) -> float:
-    return compute_fast_p_score(overall_runtime, baseline_torch_time_filepath, level, num_problems, p=1.0)
-    
+                 baseline_speed=np.array(baseline_time_array),
+                 actual_speed=np.array(overall_runtime),
+                 n=len(problem_ids),
+                 p=p)
 
 
-def compute_fast_p_for_run_with_turn_k(run_path: str,
-                                       turn_k: int,
-                                       level: int,
-                                       baseline_torch_time_filepath: str,
-                                       num_problems: int = 100,
-                                       p: float = 1.0) -> float:
-    """
-    Compute the fast_p score for a single run with a given turn k
-    """
+def compute_best_fast_p_for_run(run_path: str,
+                                max_k: int,
+                                num_samples: int,
+                                level: int,
+                                baseline_torch_time_filepath: str,
+                                problem_ids: list[int],
+                                p: float = 1.0) -> float:
     # get the overall runtime
-    overall_runtime = get_overall_runtime(run_path=run_path, 
-                                          turn_k=turn_k, 
-                                          num_problems=num_problems)
+    overall_runtime = get_overall_best_runtime_for_problem(run_path=run_path,
+                                                           max_k=max_k,
+                                                           num_samples=num_samples,
+                                                           problem_ids=problem_ids)
     return compute_fast_p_score(
         overall_runtime=overall_runtime,
         baseline_torch_time_filepath=baseline_torch_time_filepath,
         level=level,
-        num_problems=num_problems,
+        problem_ids=problem_ids,
         p=p)
 
+
+def compute_mean_fast_p_for_run(run_path: str,
+                                max_k: int,
+                                num_samples: int,
+                                level: int,
+                                baseline_torch_time_filepath: str,
+                                problem_ids: list[int],
+                                p: float = 1.0) -> float:
+    # get the overall runtime
+    overall_runtime = get_overall_mean_runtime_for_problem(run_path=run_path,
+                                                           max_k=max_k,
+                                                           num_samples=num_samples,
+                                                           problem_ids=problem_ids)
+    return compute_fast_p_score(
+        overall_runtime=overall_runtime,
+        baseline_torch_time_filepath=baseline_torch_time_filepath,
+        level=level,
+        problem_ids=problem_ids,
+        p=p)
+
+
+def compute_input_tokens(run_path: str,
+                         max_k: int,
+                         num_samples: int,
+                         problem_ids: list[int]) -> int:
+    count = 0
+    for problem_id in problem_ids:
+        for sample_id in range(1, num_samples + 1):
+            log_data = load_json_data(os.path.join(run_path,
+                                                   f"problem_{problem_id}",
+                                                   f"sample_{sample_id}",
+                                                   "log.json"))
+            for idx, turn_data in log_data.items():
+                if int(idx) > max_k:
+                    break
+                count += get_turn_input_tokens(turn_data)
+    return count
+
+
+def compute_output_tokens(run_path: str,
+                          max_k: int,
+                          num_samples: int,
+                          problem_ids: list[int]) -> int:
+    count = 0
+    for problem_id in problem_ids:
+        for sample_id in range(1, num_samples + 1):
+            log_data = load_json_data(os.path.join(run_path,
+                                                   f"problem_{problem_id}",
+                                                   f"sample_{sample_id}",
+                                                   "log.json"))
+            for idx, turn_data in log_data.items():
+                if int(idx) > max_k:
+                    break
+                count += get_turn_output_tokens(turn_data)
+    return count
+
+
 def main():
-    # analyze one particular run]
-    # run_group = "level1_eval_result_profiler_last_only_deepseek"
-    # run_name = "run_v0_deepseek_r1_turn"
-    
-    # run_group = "level2_reflection_all_prev_deepseek"
-    # run_name = "run_deepseek_turns_10"
+    run_group = "kevin-32b"
+    run_name = "level1-subset-pytorch-profiler-temp-0.6-max_k-8-samples-4"
 
-    # run_group = "level3_reflection_last_only_deepseek"
-    # run_name = "run_deepseek_turns_10"
+    level = 1
+    dataset = KernelBenchDataset(dataset=dataset_name_to_dataset["KernelBench/level1-subset"])
 
-    run_group = "level3_reflection_all_prev_deepseek"
-    run_name = "run_v0_deepseek_r1_turn"
+    run_path = os.path.join(BASE_LOG_DIR, run_group, run_name)
+    baseline_torch_time_filepath = os.path.join(
+        ROOT_DIR,
+        "..",
+        "KernelBench",
+        "results",
+        "timing",
+        TIMING_BASELINE,
+        "baseline_time_torch.json",
+    )
 
-    level = 3
-    num_problems = 50
+    max_k = 4 # modify this to get best/mean@k, where k doesn't have to be max_k
+    samples = 4
 
-    run_path = os.path.join(LOG_DIR_PREFIX, run_group, run_name)
-    baseline_torch_time_filepath = os.path.join(PATH_TO_REPO_DIR, "KernelBenchInternal", "results", "timing", "L40S_matx3", "baseline_time_torch.json")
+    ## There's a number of interesting statistics that we want
+    ## 1. fast-p scores (with best kernel - best@k)
+    ## 2. fast-p scores (with mean runtime - mean@k)
+    ## 3. number of used tokens (input/output)
 
+    print(f"Run: {run_group}/{run_name}")
+    print(f"Results@k, with k={max_k}, samples={samples}")
 
-    print(compute_fast_p_for_run_with_turn_k(run_path=run_path, 
-                                             turn_k=10, 
-                                             level=level,
-                                             baseline_torch_time_filepath=baseline_torch_time_filepath,
-                                             num_problems=num_problems,
-                                             p=1.0))
-   
-    # DEBUG
-    # overall_runtime = get_overall_runtime(run_path, 10)
-    # print(overall_runtime)
-  
-    # # calculate the fast_1 score 
-    # baseline_torch_time_filepath = os.path.join(PATH_TO_REPO_DIR, "KernelBenchInternal", "results", "timing", "L40S_matx3", "baseline_time_torch.json")
-    # curr_run_fast_1_score = compute_fast_1_score(overall_runtime, baseline_torch_time_filepath)
-    # print(f"Fast 1 score: {curr_run_fast_1_score}")
-    # # runtime_up_to_k = grab_eval_results_up_to_k(
-    # #     run_path=run_path,    
-    # #     problem_id=1, 
-    # #     sample_id=0, 
-    # #     k=10)
-    # # construct the baseline array
+    # 1. best fast-p scores
+    print("=== Best@k ===")
+    for p in [0, 0.5, 0.8, 1, 1.5, 2]:
+        print(f"Fast-{p}: ", compute_best_fast_p_for_run(run_path=run_path,
+                                                         max_k=max_k,
+                                                         num_samples=samples,
+                                                         level=level,
+                                                         baseline_torch_time_filepath=baseline_torch_time_filepath,
+                                                         problem_ids=dataset.problem_ids,
+                                                         p=p))
+    # 2. mean fast-p scores
+    print("=== Mean@k ===")
+    for p in [0, 0.5, 0.8, 1, 1.5, 2]:
+        print(f"Fast-{p}: ", compute_mean_fast_p_for_run(run_path=run_path,
+                                                         max_k=max_k,
+                                                         num_samples=samples,
+                                                         level=level,
+                                                         baseline_torch_time_filepath=baseline_torch_time_filepath,
+                                                         problem_ids=dataset.problem_ids,
+                                                         p=p))
 
-    
-    # best_runtime = get_best_solution(runtime_up_to_k)
-    
-    # print("Turn runtimes:", runtime_up_to_k)
-    # print("Best runtime:", best_runtime)
-    
-    # run_data = get_run_data(run_group, run_name, dataset)
+    # 3. used tokens
+    input_tok = compute_input_tokens(run_path=run_path,
+                                     max_k=max_k,
+                                     num_samples=samples,
+                                     problem_ids=dataset.problem_ids)
+    output_tok = compute_output_tokens(run_path=run_path,
+                                       max_k=max_k,
+                                       num_samples=samples,
+                                       problem_ids=dataset.problem_ids)
+    print("=== Total tokens@k ===")
+    print(f"Input tokens: {input_tok}")
+    print(f"Output tokens: {output_tok}")
 
 
 if __name__ == "__main__":
