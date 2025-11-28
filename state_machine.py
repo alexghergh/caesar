@@ -4,8 +4,8 @@ import copy
 import json
 import multiprocessing as mp
 from pathlib import Path
-
-from langgraph.graph.state import CompiledStateGraph
+from dataclasses import dataclass
+from typing import TypedDict
 
 from KernelBenchInternal import eval as kernel_eval
 from KernelBenchInternal.utils import (
@@ -14,29 +14,52 @@ from KernelBenchInternal.utils import (
     read_file,
 )
 from langgraph.graph import StateGraph, START, END
+from langgraph.graph.state import CompiledStateGraph
+from langgraph.runtime import Runtime
 
 from eval import (
     compile_single_sample,
     evaluate_single_sample_src_mp,
     get_torch_profiler_info_mp,
 )
+from prompt_state_machine import build_llm_prompt
 from states import StateOutcome
 from work import WorkArgs
 from logger import CaesarLogger
-from utils import build_llm_prompt_for_turn, ensure_json_serializable
+from utils import ensure_json_serializable
 from orchestrator import GPUOrchestrator
 from caesar_config import CaesarRunConfig
-from graph_state import ConversationInfo, CaesarGraphState
+from conversation_info import ConversationInfo
 
 
+# context that doesn't change during state machine traversal
+@dataclass
+class CaesarRuntimeContext:
+    process_id: int
+    config: CaesarRunConfig
+    work: WorkArgs
+    logger: CaesarLogger
+    build_dir: str | os.PathLike
+    orchestrator: GPUOrchestrator
+    worker_semaphore: mp.Semaphore
 
-def setup_state_machine_handler(state: CaesarGraphState) -> CaesarGraphState:
+# graph state that is updated when iterating between the state machine rounds
+class CaesarGraphState(TypedDict):
+    conversation_info: ConversationInfo
+    current_turn: int
+    ref_problem_src: str
+    state_outcome: StateOutcome
+
+
+def setup_state_machine_handler(
+    state: CaesarGraphState, runtime: Runtime[CaesarRuntimeContext]
+) -> CaesarGraphState:
     """
     Initialize all required fields from the graph state.
     """
-    logger = state['logger']
-    config = state['config']
-    work = state['work']
+    logger = runtime.context.logger
+    config = runtime.context.config
+    work = runtime.context.work
     conversation_info = state['conversation_info']
 
     # skip if run already finished
@@ -127,12 +150,14 @@ def setup_state_machine_handler(state: CaesarGraphState) -> CaesarGraphState:
     return state
 
 
-def create_prompt_handler(state: CaesarGraphState) -> CaesarGraphState:
+def create_prompt_handler(
+    state: CaesarGraphState, runtime: Runtime[CaesarRuntimeContext]
+) -> CaesarGraphState:
     """
     Create the prompt for the model.
     """
-    config = state['config']
-    work = state['work']
+    config = runtime.context.config
+    work = runtime.context.work
     conv_info = state['conversation_info']
     current_turn = state['current_turn']
 
@@ -145,13 +170,13 @@ def create_prompt_handler(state: CaesarGraphState) -> CaesarGraphState:
     # initialize this round's prompt with the information so far
     # TODO build llm prompt should just be another node I guess, conditioned on
     # the generation type (i.e. simple or gepa)
-    conv_info.input_prompt[current_turn] = build_llm_prompt_for_turn(
+    conv_info.input_prompt[current_turn] = build_llm_prompt( #build_llm_prompt_for_turn(
+        config=config,
         turn=current_turn,
         ref_arch_src=state['ref_problem_src'],
         kernels=conv_info.kernel_code,
         eval_result=conv_info.eval_result,
         profiler_result=conv_info.profiler_result,
-        strategy=config.prompt_strategy,
         max_profiler_feedback_length=4000,  # TODO this is in characters; how big can traces actually get? #self.config.max_feedback_length,
     )
 
@@ -159,12 +184,14 @@ def create_prompt_handler(state: CaesarGraphState) -> CaesarGraphState:
     return state
 
 
-def query_llm_handler(state: CaesarGraphState) -> CaesarGraphState:
+def query_llm_handler(
+    state: CaesarGraphState, runtime: Runtime[CaesarRuntimeContext]
+) -> CaesarGraphState:
     """
     Logic for the generation state. Query LLM given context and generate kernel.
     """
-    config = state['config']
-    work = state['work']
+    config = runtime.context.config
+    work = runtime.context.work
     current_turn = state['current_turn']
     conv_info = state['conversation_info']
 
@@ -218,12 +245,14 @@ def query_llm_handler(state: CaesarGraphState) -> CaesarGraphState:
     return state
 
 
-def compile_handler(state: CaesarGraphState) -> CaesarGraphState:
+def compile_handler(
+    state: CaesarGraphState, runtime: Runtime[CaesarRuntimeContext]
+) -> CaesarGraphState:
     """
     Logic for the CPU compilation state.
     """
-    config = state['config']
-    work = state['work']
+    config = runtime.context.config
+    work = runtime.context.work
     current_turn = state['current_turn']
     conv_info = state['conversation_info']
 
@@ -233,13 +262,15 @@ def compile_handler(state: CaesarGraphState) -> CaesarGraphState:
             f"Round {current_turn}, entering state: COMPILATION"
         )
 
-    # compile kernel and build cache
-    returncode, stdout, err = compile_single_sample(
-        kernel_src=conv_info.kernel_code[current_turn],
-        config=config,
-        build_dir=state['build_dir'],
-        timeout_seconds=config.timeout
-    )
+    with runtime.context.worker_semaphore:
+        # compile kernel and build cache
+        returncode, stdout, err = compile_single_sample(
+            kernel_src=conv_info.kernel_code[current_turn],
+            config=config,
+            build_dir=runtime.context.build_dir,
+            timeout_seconds=config.timeout
+        )
+
 
     if config.verbose:
         print(f"[COMPILE {work.problem_id}/{work.sample_id}] Return code: {returncode}")
@@ -272,13 +303,15 @@ def compile_handler(state: CaesarGraphState) -> CaesarGraphState:
     return state
 
 
-def correctness_check_handler(state: CaesarGraphState) -> CaesarGraphState:
+def correctness_check_handler(
+    state: CaesarGraphState, runtime: Runtime[CaesarRuntimeContext]
+) -> CaesarGraphState:
     """
     Check kernel code correctness.
     """
-    config = state['config']
-    orchestrator = state['orchestrator']
-    work = state['work']
+    config = runtime.context.config
+    orchestrator = runtime.context.orchestrator
+    work = runtime.context.work
     current_turn = state['current_turn']
     conv_info = state['conversation_info']
 
@@ -310,7 +343,7 @@ def correctness_check_handler(state: CaesarGraphState) -> CaesarGraphState:
                 state['ref_problem_src'],
                 conv_info.kernel_code[current_turn],
                 config,
-                state['build_dir'],
+                runtime.context.build_dir,
                 gpu_id,
                 config.timeout,
                 result_queue,
@@ -370,13 +403,15 @@ def correctness_check_handler(state: CaesarGraphState) -> CaesarGraphState:
     return state
 
 
-def performance_handler(state: CaesarGraphState) -> CaesarGraphState:
+def performance_handler(
+    state: CaesarGraphState, runtime: Runtime[CaesarRuntimeContext]
+) -> CaesarGraphState:
     """
     Logic for the performance state. This is for profiling code.
     """
-    config = state['config']
-    orchestrator = state['orchestrator']
-    work = state['work']
+    config = runtime.context.config
+    orchestrator = runtime.context.orchestrator
+    work = runtime.context.work
     current_turn = state['current_turn']
     conv_info = state['conversation_info']
 
@@ -404,7 +439,7 @@ def performance_handler(state: CaesarGraphState) -> CaesarGraphState:
             args=(
                 state['ref_problem_src'],
                 conv_info.kernel_code[current_turn],
-                state['build_dir'],
+                runtime.context.build_dir,
                 gpu_id,
                 result_queue,
             ),
@@ -431,13 +466,15 @@ def performance_handler(state: CaesarGraphState) -> CaesarGraphState:
     return state
 
 
-def finish_turn_handler(state: CaesarGraphState) -> CaesarGraphState:
+def finish_turn_handler(
+    state: CaesarGraphState, runtime: Runtime[CaesarRuntimeContext]
+) -> CaesarGraphState:
     """
     Logic for the finish state of a turn.
     """
-    config = state['config']
-    logger = state['logger']
-    work = state['work']
+    config = runtime.context.config
+    logger = runtime.context.logger
+    work = runtime.context.work
     current_turn = state['current_turn']
     conv_info = state['conversation_info']
 
@@ -477,7 +514,7 @@ def _init_state_machine_graph() -> CompiledStateGraph:
     Initialize langgraph state graph.
     """
     # set up langgraph state and graph transitions
-    builder = StateGraph(CaesarGraphState)
+    builder = StateGraph(CaesarGraphState, context_schema=CaesarRuntimeContext)
 
     # init
     builder.add_node('setup_state_machine_handler', setup_state_machine_handler)
@@ -544,6 +581,7 @@ def _init_state_machine_graph() -> CompiledStateGraph:
     graph = builder.compile()
 
     # save an image of the graph's state
+    # print(graph.get_graph().draw_mermaid())
     # graph.get_graph().draw_mermaid_png(output_file_path='state_machine_graph.png')
     return graph
 
@@ -562,7 +600,7 @@ def init_and_run_graph(
         graph = _init_state_machine_graph()
 
         # initialize state setup
-        initial_state: CaesarGraphState = {
+        initial_context: CaesarRuntimeContext = {
             'process_id': process_id,
             'config': config,
             'work': work,
@@ -582,6 +620,9 @@ def init_and_run_graph(
                 work.get_log_path(),
             ),
             'orchestrator': orchestrator,
+            'worker_semaphore': worker_semaphore,
+        }
+        initial_state: CaesarGraphState = {
             'conversation_info': ConversationInfo(),
 
             'current_turn': 1,
@@ -593,11 +634,9 @@ def init_and_run_graph(
         }
 
         # launch graph
-        graph.invoke(initial_state, {"recursion_limit": 1000})
+        graph.invoke(initial_state, {"recursion_limit": 1000}, context=initial_context)
 
     finally:
-        worker_semaphore.release()
-
         # update global progress (for each finished sample)
         with progress.get_lock():
             progress.value += 1
@@ -626,8 +665,6 @@ def run_state_machine(
     # launch all samples on different sub-processes and wait for completion
     sample_proc_list = []
     for sample in range(0, config.num_samples):
-
-        worker_semaphore.acquire()
 
         # create separate work for each sample
         work = copy.deepcopy(workargs)

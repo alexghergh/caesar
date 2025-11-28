@@ -1,36 +1,5 @@
-# TODOs:
-# - CoT (i.e. reasoning over how to optimize a kernel)
-# - few-shot examples
-# - summaries into new rounds (i.e. prompt an LLM to summarize the current
-# round kernel and optimizations applied, for the next round)
-# - GePA
-# - RAG few-shot or related optimizations
-# - hardware information
-# - other somewhat automated optimizations (i.e. performance measurements over
-# CUDA kernel block size)
-
-
-
-# flow explanation
-
-# round 1
-#   {INITIAL_TASK_DESCRIPTION}
-#   optional {EXAMPLE_CUDA_INLINE_SYNTAX}
-#   {KERNEL_TO_OPTIMIZE}
-#   {INITIAL_INSTRUCTION}
-
-
-# round n (if kernel generation succeeded):
-#   with no compile/correctness check/profiler feedback
-#       {INITIAL_TASK_DESCRIPTION}
-#       optional {EXAMPLE_CUDA_INLINE_SYNTAX}
-#       {KERNEL_TO_OPTIMIZE}
-#       {PREVIOUSLY_GENERATED_BEST_KERNEL}
-#       {REFLECTION_INSTRUCTION}
-# TODO
-
 # initial task description
-INITIAL_TASK_DESCRIPTION = """You write custom CUDA kernels to replace the pytorch operators in the given architecture to get speedups.\n\nYou have complete freedom to choose the set of operators you want to replace. You may make the decision to replace some operators with custom CUDA kernels and leave others unchanged. You may replace multiple operators with custom implementations, consider operator fusion opportunities (combining multiple operators into a single kernel, for example, combining matmul+relu), or algorithmic changes (such as online softmax). You are only limited by your imagination.\n\n"""
+INITIAL_TASK_DESCRIPTION = """You write custom CUDA kernels to replace the pytorch operators in the given architecture to get speedups. The hardware for which you have to create optimized kernels is: {hardware}.\n\nYou have complete freedom to choose the set of operators you want to replace. You may make the decision to replace some operators with custom CUDA kernels and leave others unchanged. You may replace multiple operators with custom implementations, consider operator fusion opportunities (combining multiple operators into a single kernel, for example, combining matmul+relu), or algorithmic changes (such as online softmax). You are only limited by your imagination.\n\n"""
 
 EXAMPLE_CUDA_INLINE_SYNTAX = """The following is an example to show you the syntax of embedding custom CUDA operators inline in torch. The example given architecture (in pure pytorch) is:
 

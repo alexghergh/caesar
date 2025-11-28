@@ -34,11 +34,15 @@ class CaesarRunConfig(Config):
         self.reasoning_effort = '' # gpt-5 only; can be 'low', 'high', 'medium'
         self.reasoning_budget_tokens = 0 # claude models only; if 0, set to 4096
 
-        # strategy for prompting; see strategy.py
-        self.prompt_strategy = REQUIRED # set on CLI with e.g. prompt_strategy='["SHOW_INLINE_SYNTAX", "COMPILER_FEEDBACK"]'
+        # prompt feedback options
+        self.use_prompt_optimization = False # uses the LLM to create prompts
+                                             # from the given information
+        self.use_compiler_feedback = True
+        self.use_correctness_feedback = True
+        self.use_profiler_feedback = True
 
         # cpu workers and gpus available
-        # workers are number of state machines running at one time
+        # workers are number of compilation processes running at one time
         # set workers to 4x the number of GPU workers or slightly higher
         self.num_workers = 1
         self.num_gpus = 1
@@ -58,17 +62,6 @@ class CaesarRunConfig(Config):
         # output verbosity
         self.verbose = False
         self.show_state = False
-
-    def finalize(self):
-        # parse strategies from the command line
-        if not isinstance(self.prompt_strategy, list):
-            raise ValueError("The 'prompt_strategy' variable should be a list of strategies")
-
-        strats = set()
-        for elem in self.prompt_strategy:
-            strats.add(Strategy[elem])
-
-        self.prompt_strategy = strats
 
     # server examples
 
