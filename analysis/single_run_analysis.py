@@ -264,8 +264,8 @@ def compute_output_tokens(run_path: str,
 
 
 def main():
-    run_group = "kevin-32b"
-    run_name = "level1-subset-pytorch-profiler-temp-0.6-max_k-8-samples-4"
+    run_group = "claude-4-5-haiku-reasoning"
+    run_name = "level1-subset-max_k-8-samples-4"
 
     level = 1
     dataset = KernelBenchDataset(dataset=dataset_name_to_dataset["KernelBench/level1-subset"])
@@ -281,13 +281,15 @@ def main():
         "baseline_time_torch.json",
     )
 
+    fastp = 1
     max_k = 8 # modify this to get best/mean@k, where k doesn't have to be max_k
     samples = 4
 
     ## There's a number of interesting statistics that we want
     ## 1. fast-p scores (with best kernel - best@k)
     ## 2. fast-p scores (with mean runtime - mean@k)
-    ## 3. number of used tokens (input/output)
+    ## 3. for a given p, calculate fast-p trajectory, given turns budgets
+    ## 4. number of used tokens (input/output)
 
     print(f"Run: {run_group}/{run_name}")
     print(f"Results@k, with k={max_k}, samples={samples}")
@@ -313,7 +315,18 @@ def main():
                                                          problem_ids=dataset.problem_ids,
                                                          p=p))
 
-    # 3. used tokens
+    # 3. for a given p, calculate fast-p trajectory, given turns budgets
+    print("===fast-p trajectory@p ===")
+    for turns in range(1, max_k + 1):
+        print(f"Fast-{fastp} with {turns} turns: ", compute_best_fast_p_for_run(run_path=run_path,
+                                                                                max_k=turns,
+                                                                                num_samples=samples,
+                                                                                level=level,
+                                                                                baseline_torch_time_filepath=baseline_torch_time_filepath,
+                                                                                problem_ids=dataset.problem_ids,
+                                                                                p=fastp))
+
+    # 4. used tokens
     input_tok = compute_input_tokens(run_path=run_path,
                                      max_k=max_k,
                                      num_samples=samples,
