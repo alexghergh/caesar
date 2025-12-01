@@ -16,6 +16,7 @@ from KernelBenchInternal.utils import (
 from langgraph.graph import StateGraph, START, END
 from langgraph.graph.state import CompiledStateGraph
 from langgraph.runtime import Runtime
+from langsmith import trace
 
 from eval import (
     compile_single_sample,
@@ -106,14 +107,7 @@ def setup_state_machine_handler(
             turn_data = saved_log[turn]
 
             # update turn data
-            conversation_info.update_turn_data(turn, {
-                'input_prompt': turn_data.get('input_prompt', ''),
-                'model_response': turn_data.get('model_response', ''),
-                'kernel_code': turn_data.get('kernel_code', ''),
-                'token_usage': turn_data.get('token_usage', {}),
-                'eval_result': turn_data.get('eval_result', {}),
-                'profiler_result': turn_data.get('profiler_result', ''),
-            })
+            conversation_info.update_turn_data(turn, turn_data)
 
             # if these are empty, this turn was corrupted somehow
             # re-do this turn
@@ -634,7 +628,8 @@ def init_and_run_graph(
         }
 
         # launch graph
-        graph.invoke(initial_state, {"recursion_limit": 1000}, context=initial_context)
+        with trace(name=f'problem-{work.problem_id}-sample-{work.sample_id}'):
+            graph.invoke(initial_state, {"recursion_limit": 1000}, context=initial_context)
 
     finally:
         # update global progress (for each finished sample)

@@ -63,27 +63,14 @@ class CaesarLogger:
 
     def update_turn(self, turn: int, llm_info: ConversationInfo) -> None:
         if turn not in self.current_log:
-            self.current_log[turn] = {
-                "input_prompt": "",
-                "model_response": "",
-                "kernel_code": "",
-                "token_usage": {},
-                "eval_result": {},
-                "profiler_result": "",
-            }
+            self.current_log[turn] = {}
 
-        if llm_info.input_prompt.get(turn, None):
-            self.current_log[turn]["input_prompt"] = llm_info.input_prompt[turn]
-        if llm_info.model_response.get(turn, None):
-            self.current_log[turn]["model_response"] = llm_info.model_response[turn]
-        if llm_info.kernel_code.get(turn, None):
-            self.current_log[turn]["kernel_code"] = llm_info.kernel_code[turn]
-        if llm_info.model_response.get(turn, None):
-            self.current_log[turn]["token_usage"] = llm_info.token_usage[turn]
-        if llm_info.eval_result.get(turn, None):
-            self.current_log[turn]["eval_result"] = llm_info.eval_result[turn]
-        if llm_info.profiler_result.get(turn, None):
-            self.current_log[turn]["profiler_result"] = llm_info.profiler_result[turn]
+        self.current_log[turn]['input_prompt'] = llm_info.input_prompt.get(turn, '')
+        self.current_log[turn]['model_response'] = llm_info.model_response.get(turn, '')
+        self.current_log[turn]['kernel_code'] = llm_info.kernel_code.get(turn, '')
+        self.current_log[turn]['token_usage'] = llm_info.token_usage.get(turn, '')
+        self.current_log[turn]['eval_result'] = llm_info.eval_result.get(turn, '')
+        self.current_log[turn]['profiler_result'] = llm_info.profiler_result.get(turn, '')
 
     def update_turn_and_log(self, turn: int, llm_info) -> None:
         """

@@ -1,49 +1,38 @@
 from typing import Any
+from dataclasses import dataclass, field, fields
 
 
+@dataclass
 class ConversationInfo:
-    def __init__(self) -> None:
-        # each parameter contains info for each turn
-        self._data = {
-            'input_prompt': {}, # dict[int, str]
-            'model_response': {}, # dict[int, str]
-            'kernel_code': {}, # dict[int, str]
-            'token_usage': {}, # dict[int, dict]
-            'eval_result': {}, # dict[int, dict] - compile / runtime feedback
-            'profiler_result': {} # dict[int, str] - profiler feedback
-        }
+    """
+    Information regarding kernel code generation for each turn.
+    """
 
-    def __getattr__(self, name: str):
-        if name in self._data:
-            return self._data[name]
-        else:
-            # should not reach this
-            raise AttributeError(f"'LLMTurnInfo' object has no attribute '{name}'.")
-
-    def __setattr__(self, name: str, value: Any):
-        if name == '_data':
-            super().__setattr__(name, value)
-        else:
-            # should not reach this
-            raise AttributeError(f"Cannot set attribute '{name}' on 'LLMTurnInfo' object.")
+    input_prompt: dict[int, str] = field(default_factory=dict)
+    model_response: dict[int, str] = field(default_factory=dict)
+    kernel_code: dict[int, str] = field(default_factory=dict)
+    token_usage: dict[int, dict] = field(default_factory=dict)
+    eval_result: dict[int, dict] = field(default_factory=dict)
+    profiler_result: dict[int, str] = field(default_factory=dict)
 
     def __getitem__(self, key: Any):
         # key is turn / round
-        ret_val = {}
-        for data in self._data:
-            ret_val[data] = self._data[data].get(key, "")
+        if not isinstance(key, int):
+            raise IndexError(f"{self.__class__.__name__} doesn't expect non-integer indexing")
 
-        # special case default values
-        ret_val['eval_result'] = self._data['eval_result'].get(key, {})
-        ret_val['token_usage'] = self._data['token_usage'].get(key, {})
+        # we gather the data for the specific turn from each of the fields
+        ret_val: dict = {}
+        for f in fields(self):
+            ret_val[f.name] = getattr(self, f.name).get(key, f.default_factory())
 
         return ret_val
 
     # helper setter method
     def update_turn_data(self, turn: int, turn_data: dict[str, Any]):
-        for field in self._data.keys():
-            self._data[field][turn] = turn_data.get(field, "")
-
-        # special case default values
-        self._data['eval_result'][turn] = turn_data.get('eval_result', {})
-        self._data['token_usage'][turn] = turn_data.get('token_usage', {})
+        """
+        Update turn of conversation data. Careful, this overrides the whole turn
+        of data, so passing incomplete dictionaries as the turn data will
+        override other fields.
+        """
+        for f in fields(self):
+            getattr(self, f.name)[turn] = turn_data.get(f.name, f.default_factory())
