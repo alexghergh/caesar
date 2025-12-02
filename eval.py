@@ -210,7 +210,13 @@ def get_torch_profiler_info_mp(ref_arch_src: str,
     Same as `get_torch_profiler_info`, but meant to be called in a
     multiprocessing context. It puts the result in a queue instead of returning.
     """
-    result_queue.put(get_torch_profiler_info(ref_arch_src,
-                                             kernel_src,
-                                             build_dir,
-                                             gpu_id))
+    try:
+        info = get_torch_profiler_info(ref_arch_src,
+                                       kernel_src,
+                                       build_dir,
+                                       gpu_id)
+        result_queue.put(info)
+    except Exception:
+        # this might fail if the profiler fails to run for some reason, e.g. due
+        # to some CUDA error; in such a case, pretend profiling never happened
+        result_queue.put("")
