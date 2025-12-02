@@ -16,13 +16,13 @@ def get_kernel_hash(kernel_src: str) -> str:
 
 
 def compile_single_sample(kernel_src: str,
-                          config: CaesarRunConfig,
+                          gpu_arch: list[str],
                           build_dir: str,
                           timeout_seconds: int = 480) -> tuple[int, str, str]:
     """
     Compile kernel on CPU and capture errors.
     """
-    kernel_utils.set_gpu_arch(config.gpu_arch)
+    kernel_utils.set_gpu_arch(gpu_arch)
 
     # the build dir contains .c, .cu, .so, .o, .py and some ninja files
     # some of these need to be kept as cache

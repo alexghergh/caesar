@@ -80,7 +80,9 @@ def problem_statement_handler(
     example_new_arch = read_file(example_new_arch_path)
 
     # construct the initial prompt
-    prompt = INITIAL_TASK_DESCRIPTION
+    prompt = INITIAL_TASK_DESCRIPTION.format(
+        hardware_list=", ".join(runtime.context.config.gpu_arch)
+    )
 
     prompt += EXAMPLE_CUDA_INLINE_SYNTAX.format(
         example_arch_src=example_arch, example_new_arch_src=example_new_arch
@@ -98,9 +100,7 @@ def initial_instruction_handler(
     Add initial instruction to the prompt.
     """
     prompt = state['prompt']
-    prompt += INITIAL_INSTRUCTION.format(
-        hardware=", ".join(runtime.context.config.gpu_arch)
-    )
+    prompt += INITIAL_INSTRUCTION
     return { 'prompt': prompt }
 
 

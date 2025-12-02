@@ -260,11 +260,10 @@ def compile_handler(
         # compile kernel and build cache
         returncode, stdout, err = compile_single_sample(
             kernel_src=conv_info.kernel_code[current_turn],
-            config=config,
+            gpu_arch=config.gpu_arch,
             build_dir=runtime.context.build_dir,
             timeout_seconds=config.timeout
         )
-
 
     if config.verbose:
         print(f"[COMPILE {work.problem_id}/{work.sample_id}] Return code: {returncode}")
