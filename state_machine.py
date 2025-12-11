@@ -7,10 +7,11 @@ from pathlib import Path
 from dataclasses import dataclass
 from typing import TypedDict
 
+from langchain_core.messages import AIMessage
+
 from KernelBenchInternal import eval as kernel_eval
 from KernelBenchInternal.utils import (
     extract_last_code,
-    query_server,
     read_file,
 )
 from langgraph.graph import StateGraph, START, END
@@ -27,7 +28,7 @@ from prompt_state_machine import build_llm_prompt
 from states import StateOutcome
 from work import WorkArgs
 from logger import CaesarLogger
-from utils import ensure_json_serializable
+from utils import ensure_json_serializable, create_llm
 from orchestrator import GPUOrchestrator
 from caesar_config import CaesarRunConfig
 from conversation_info import ConversationInfo
@@ -43,6 +44,7 @@ class CaesarRuntimeContext:
     build_dir: str | os.PathLike
     orchestrator: GPUOrchestrator
     worker_semaphore: mp.Semaphore
+    llm: CompiledStateGraph
 
 # graph state that is updated when iterating between the state machine rounds
 class CaesarGraphState(TypedDict):
@@ -186,6 +188,7 @@ def query_llm_handler(
     """
     config = runtime.context.config
     work = runtime.context.work
+    llm = runtime.context.llm
     current_turn = state['current_turn']
     conv_info = state['conversation_info']
 
@@ -196,33 +199,14 @@ def query_llm_handler(
         )
 
     # query LLM
-    model_response, token_usage = query_server(
-        # prompt
-        prompt=conv_info.input_prompt[current_turn],
+    model_response: AIMessage = llm.invoke(conv_info.input_prompt[current_turn])
 
-        # sampling
-        temperature=(
-            0.0 if config.greedy_sample else config.temperature
-        ),
-        top_p=config.top_p,
-        top_k=config.top_k,
-        max_tokens=config.max_tokens,
+    conv_info.model_response[current_turn] = model_response.content
+    conv_info.token_usage[current_turn] = model_response.usage_metadata
 
-        # reasoning models
-        use_reasoning_model=config.reasoning_model, # claude, gpt, gemini
-        reasoning_effort=config.reasoning_effort, # gpt-5 only
-        budget_tokens=config.reasoning_budget_tokens, # claude
-
-        # server type
-        server_port=config.server_port,
-        server_address=config.server_address,
-        server_type=config.server_type,
-        model_name=config.model_name,
+    kernel_code = extract_last_code(
+        conv_info.model_response[current_turn], ["python", "cpp"]
     )
-    conv_info.model_response[current_turn] = model_response
-    conv_info.token_usage[current_turn] = token_usage
-
-    kernel_code = extract_last_code(model_response, ["python", "cpp"])
 
     # if we failed to generate a kernel, simply move to the next round
     if kernel_code is None or len(kernel_code) == 0:
@@ -588,6 +572,27 @@ def init_and_run_graph(
     worker_semaphore: mp.Semaphore,
 ):
     try:
+        # get llm
+        llm = create_llm(
+            # sampling
+            temperature=(
+                0.0 if config.greedy_sample else config.temperature
+            ),
+            top_p=config.top_p,
+            top_k=config.top_k,
+            max_tokens=config.max_tokens,
+
+            # reasoning models
+            use_reasoning_model=config.reasoning_model, # claude, gpt, gemini
+            reasoning_effort=config.reasoning_effort, # gpt-5 only
+            budget_tokens=config.reasoning_budget_tokens, # claude
+
+            # server type
+            server_port=config.server_port,
+            server_address=config.server_address,
+            server_type=config.server_type,
+            model_name=config.model_name,
+        )
 
         # build graph
         graph = _init_state_machine_graph()
@@ -614,6 +619,7 @@ def init_and_run_graph(
             ),
             'orchestrator': orchestrator,
             'worker_semaphore': worker_semaphore,
+            'llm': llm,
         }
         initial_state: CaesarGraphState = {
             'conversation_info': ConversationInfo(),

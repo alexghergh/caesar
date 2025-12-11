@@ -3,25 +3,13 @@ import re
 import json
 import signal
 
-from KernelBenchInternal.utils import read_file
 from KernelBenchInternal.eval import KernelExecResult
-
-from caesar_config import CaesarRunConfig
-from prompts import (
-    COMPILER_FEEDBACK_PROMPT,
-    CORRECTNESS_FEEDBACK_PROMPT,
-    EXAMPLE_CUDA_INLINE_SYNTAX,
-    INITIAL_TASK_DESCRIPTION,
-    INITIAL_INSTRUCTION,
-    KERNEL_TO_OPTIMIZE,
-    PREVIOUSLY_GENERATED_BEST_AND_LAST_KERNELS,
-    PREVIOUSLY_GENERATED_KERNEL,
-    PROFILER_FEEDBACK_PROMPT,
-    REFLECTION_COMPILER_FEEDBACK_INSTRUCTION,
-    REFLECTION_CORRECTNESS_FEEDBACK_INSTRUCTION,
-    REFLECTION_INSTRUCTION,
-    REFLECTION_PROFILER_FEEDBACK_INSTRUCTION
-)
+from langgraph.graph.state import CompiledStateGraph
+from langchain.agents import create_agent
+from langchain.agents.middleware import SummarizationMiddleware
+from langchain_openai import ChatOpenAI
+from langchain_anthropic import ChatAnthropic
+from langchain_google_genai import ChatGoogleGenerativeAI
 
 
 def exec_log_to_obj(saved_dict: dict) -> KernelExecResult:
@@ -301,3 +289,78 @@ def get_last_kernel_code(kernel_code: dict) -> int | None:
         if code != "":
             last_kernel_idx = idx
     return last_kernel_idx
+
+
+################################################################################
+### LLM usage
+################################################################################
+
+
+# define API key access
+OPENAI_KEY = os.environ.get("OPENAI_API_KEY")
+ANTHROPIC_KEY = os.environ.get("ANTHROPIC_API_KEY")
+GEMINI_KEY = os.environ.get("GEMINI_API_KEY")
+SGLANG_KEY = os.environ.get("SGLANG_API_KEY", "SGLANG_KEY")
+
+
+def create_llm(
+    temperature: float = 0.0,
+    top_p: float = 1.0, # nucleus sampling
+    top_k: int = 50,
+    num_completions: int = 1, # beam search
+    max_tokens: int = 128, # max output tokens to generate
+    server_type: str = "sglang",
+    server_address: str = "localhost",
+    server_port: int = 30000, # only for local server hosted on SGLang
+    model_name: str = "default", # specify model type
+
+    # reasoning models
+    use_reasoning_model: bool = True, # whether to use reasoning version
+    budget_tokens: int = 0, # for claude thinking
+    reasoning_effort: str = 'medium', # for gpt-5
+) -> CompiledStateGraph:
+
+    # create client
+    match server_type:
+        case 'openai':
+            client = ChatOpenAI(
+                n=num_completions,
+                api_key=OPENAI_KEY,
+                timeout=None,
+                max_retries=0,
+                max_completion_tokens=max_tokens,
+                reasoning_effort=reasoning_effort if use_reasoning_model else "",
+            )
+        case 'anthropic':
+            client = ChatAnthropic(
+                model_name=model_name,
+                api_key=ANTHROPIC_KEY,
+                timeout=None,
+                max_retries=0,
+                max_tokens=max_tokens,
+                thinking={
+                    "type": "enabled" if use_reasoning_model else "disabled",
+                    "budget_tokens": budget_tokens if budget_tokens != 0 else max_tokens // 2
+                },
+            )
+        case 'google':
+            client = ChatGoogleGenerativeAI(
+                model=model_name,
+                api_key=GEMINI_KEY,
+                timeout=None,
+                max_retries=0,
+                max_tokens=max_tokens,
+            )
+        case 'sglang':
+            client = ChatOpenAI(
+                model=model_name,
+                temperature=temperature,
+                top_p=top_p,
+                n=num_completions,
+                base_url=f'http://{server_address}:{server_port}/v1',
+                api_key=SGLANG_KEY,
+                timeout=None,
+                max_retries=0,
+                max_completion_tokens=max_tokens,
+            )
+    return client
