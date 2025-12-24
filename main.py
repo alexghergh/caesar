@@ -20,7 +20,7 @@ from KernelBenchInternal.dataset import (
 )
 
 
-from state_machine import run_state_machine
+from agent_graph import run_state_machine
 from work import WorkArgs
 from caesar_config import CaesarRunConfig
 from orchestrator import GPUOrchestrator
@@ -116,6 +116,8 @@ def main(config: CaesarRunConfig):
         workargs.problem_path = dataset.get_problem_path_by_id(workargs.problem_id)
 
         # launch state machine process
+        launch_state_machine_process(config, orchestrator, workargs, progress,
+                                     proc_sem)
         worker_proc = mp.Process(
             target=launch_state_machine_process,
             args=(config, orchestrator, workargs, progress, proc_sem),

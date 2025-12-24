@@ -361,7 +361,7 @@ def build_llm_prompt(
     eval_result: dict,
     profiler_result: dict,
     max_profiler_feedback_length: int,
-) -> PromptGraphState:
+) -> str:
 
     # init prompt builder graph
     prompt_graph = _init_prompt_state_machine_graph()

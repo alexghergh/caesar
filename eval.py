@@ -30,13 +30,13 @@ def compile_single_sample(kernel_src: str,
     kernel_build_dir = os.path.join(build_dir, kernel_hash)
 
     try:
-        with Timeout(timeout_seconds):
-            returncode, stdout, err = kernel_eval.build_compile_cache_with_capturing(
-                custom_model_src=kernel_src,
-                verbose=False,
-                build_dir=kernel_build_dir,
-            )
-            return returncode, stdout, err
+        #with Timeout(timeout_seconds):
+        returncode, stdout, err = kernel_eval.build_compile_cache_with_capturing(
+            custom_model_src=kernel_src,
+            verbose=False,
+            build_dir=kernel_build_dir,
+        )
+        return returncode, stdout, err
     except TimeoutError:
         print(f"[WARNING] Compilation timed out after {timeout_seconds} seconds")
         return -1, f"Compilation timed out after {timeout_seconds} seconds", f"Compilation timed out after {timeout_seconds} seconds"
@@ -127,12 +127,18 @@ def evaluate_single_sample_src_mp(ref_arch_src: str,
     multiprocessing context. Instead of returning the result, it puts it in a
     queue passed as parameter.
     """
-    result_queue.put(evaluate_single_sample_src(ref_arch_src,
-                                                kernel_src,
-                                                configs,
-                                                build_dir,
-                                                gpu_id,
-                                                timeout_seconds))
+    try:
+        info = evaluate_single_sample_src(ref_arch_src,
+                                          kernel_src,
+                                          configs,
+                                          build_dir,
+                                          gpu_id,
+                                          timeout_seconds)
+        result_queue.put(info)
+    except Exception:
+        # this might fail if the compiler fails to run for some reason, e.g. due
+        # to some CUDA error; in such a case, pretend compiler failed
+        result_queue.put("")
 
 
 def get_torch_profiler_info(ref_arch_src: str,

@@ -28,7 +28,7 @@ from prompt_state_machine import build_llm_prompt
 from states import StateOutcome
 from work import WorkArgs
 from logger import CaesarLogger
-from utils import ensure_json_serializable, create_llm
+from utils import create_coding_agent, ensure_json_serializable
 from orchestrator import GPUOrchestrator
 from caesar_config import CaesarRunConfig
 from conversation_info import ConversationInfo
@@ -44,7 +44,7 @@ class CaesarRuntimeContext:
     build_dir: str | os.PathLike
     orchestrator: GPUOrchestrator
     worker_semaphore: mp.Semaphore
-    llm: CompiledStateGraph
+    coding_agent: CompiledStateGraph
 
 # graph state that is updated when iterating between the state machine rounds
 class CaesarGraphState(TypedDict):
@@ -188,7 +188,7 @@ def query_llm_handler(
     """
     config = runtime.context.config
     work = runtime.context.work
-    llm = runtime.context.llm
+    coding_agent = runtime.context.coding_agent
     current_turn = state['current_turn']
     conv_info = state['conversation_info']
 
@@ -199,7 +199,7 @@ def query_llm_handler(
         )
 
     # query LLM
-    model_response: AIMessage = llm.invoke(conv_info.input_prompt[current_turn])
+    model_response: AIMessage = coding_agent.invoke(conv_info.input_prompt[current_turn])
 
     conv_info.model_response[current_turn] = model_response.content
     conv_info.token_usage[current_turn] = model_response.usage_metadata
@@ -572,8 +572,8 @@ def init_and_run_graph(
     worker_semaphore: mp.Semaphore,
 ):
     try:
-        # get llm
-        llm = create_llm(
+        # get coding agent
+        coding_agent = create_coding_agent(
             # sampling
             temperature=(
                 0.0 if config.greedy_sample else config.temperature
@@ -673,6 +673,8 @@ def run_state_machine(
         if config.verbose:
             print(f"State machine worker {os.getpid()} starting work {work}")
 
+        init_and_run_graph(config, work, process_id, orchestrator, progress,
+                           worker_semaphore)
         sample_proc = mp.Process(
             target=init_and_run_graph,
             args=(config, work, process_id, orchestrator, progress, worker_semaphore),
