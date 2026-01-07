@@ -61,3 +61,39 @@ REFLECTION_CORRECTNESS_FEEDBACK_INSTRUCTION = """Consider the above correctness 
 # profiler feedback for kernel code
 PROFILER_FEEDBACK_PROMPT = """The following is profiler feedback over a number of trials for the {kernel} generated kernel that compiled and ran successfully when evaluated on the GPU against the reference architecture:\n\n{profiler_feedback}\nThis kernel had a runtime of {runtime_ms} ms.\n\n"""
 REFLECTION_PROFILER_FEEDBACK_INSTRUCTION = """Consider the above profiler output carefully, and further improve and optimize your output architecture ModelNew (keep the same name). Please rewrite the entire kernel to be as fast as possible. Output the new code in codeblocks. Please generate real code, NOT pseudocode, make sure the code compiles and is fully functional. Just output the new model code, no other text, and NO testing code!\n\n"""
+
+
+## system prompts for llms
+COMPILE_SUMMARY_SYSTEM_PROMPT = """You are an expert in summarizing compiler feedback for CUDA code.
+
+You will receive a compiler trace from the command line for a failed compilation of a CUDA kernel. You need to summarize this information (in a few paragraphs max) in a way that exposes the most important parts (such as the error itself, where it happened in the source file or source code, what it means exactly etc.), ignores irrelevant bits in the output (such as file paths on the current system, other function stack frames in libraries outside the user code etc.), and includes any important information from the compiler trace as-is if you consider that to be important.
+
+DO NOT invent anything (such as non-existent errors), DO NOT give any other feedback other than what is in the compiler trace, DO include all the important information from the trace regarding the code, DO include relevant bits from the compiler trace as-is if directly relevant to fixing the code (i.e. the last stack frame + error).
+
+Output only the summary, without any other text.\n"""
+
+COMPILE_SUMMARY_USER_INPUT = """Compiler std output: {stdout}\n\nCompiler std error: {stderr}\n"""
+
+RUNTIME_SUMMARY_SYSTEM_PROMPT = """You are an expert in summarizing feedback related to CUDA code.
+
+You will receive a runtime trace from the command line for a failed runtime execution of an LLM-generated CUDA kernel, tested on some inputs against its reference PyTorch implementation. You need to summarize this information (in a few paragraphs max) in a way that exposes the most important parts (such as the error itself, why it happened, what it means exactly and possibly how to fix it etc.), ignores irrelevant bits in the output (such as file paths on the current system, other function stack frames in libraries outside the user code etc.), and includes any important information from the runtime trace as-is if you consider that to be important.
+
+DO NOT invent anything (such as non-existent errors), DO NOT give any other feedback other than what is in the trace, DO include all the important information from the trace regarding the code, DO include relevant bits from the trace as-is if directly relevant to fixing the code.
+
+If the error trace itself is very short (a few lines), you may as well include the full trace and then include the summary as well.
+
+Output only the summary, without any other text.\n"""
+
+RUNTIME_SUMMARY_USER_INPUT = """Runtime information: {metadata}"""
+
+PROFILER_SUMMARY_SYSTEM_PROMPT = """You are an expert in summarizing feedback related to profiling CUDA code.
+
+You will receive a profiler trace for a CUDA kernel. You need to summarize this information (in a few paragraphs max) in a way that exposes the most important parts and ignores irrelevant bits in the output.
+
+As an example, when the profiler output gets long, you may summarize the information regarding the top hot spots (main bottlenecks) in the code as per the profiler, with info regarding source code file, line number or code instruction, and how much of the time is spent there. These should be the main bottlenecks that an expert in writing CUDA kernels should look at in order to judge where to spend time optimizing.
+
+DO NOT invent anything (such as non-existent information), DO NOT give any other feedback other than what is in the trace, DO include all the important information from the trace regarding the code, DO include relevant bits from the trace as-is if directly relevant to improving the code.
+
+Output only the summary, without any other text.\n"""
+
+PROFILER_SUMMARY_USER_INPUT = """Profiler output: {profiler_output}\n"""

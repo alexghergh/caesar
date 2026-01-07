@@ -25,6 +25,14 @@ from eval import (
     get_torch_profiler_info_mp,
 )
 from prompt_state_machine import build_llm_prompt
+from prompts import (
+    COMPILE_SUMMARY_SYSTEM_PROMPT,
+    COMPILE_SUMMARY_USER_INPUT,
+    RUNTIME_SUMMARY_SYSTEM_PROMPT,
+    RUNTIME_SUMMARY_USER_INPUT,
+    PROFILER_SUMMARY_SYSTEM_PROMPT,
+    PROFILER_SUMMARY_USER_INPUT,
+)
 from states import StateOutcome
 from work import WorkArgs
 from logger import CaesarLogger
@@ -40,17 +48,20 @@ class CaesarRuntimeContext:
     process_id: int
     config: CaesarRunConfig
     work: WorkArgs
+    ref_problem_src: str
     logger: CaesarLogger
     build_dir: str | os.PathLike
     orchestrator: GPUOrchestrator
     worker_semaphore: mp.Semaphore
-    llm: CompiledStateGraph
+    code_llm: CompiledStateGraph
+    prompt_llm: CompiledStateGraph
+    summary_llm: CompiledStateGraph
+
 
 # graph state that is updated when iterating between the state machine rounds
 class CaesarGraphState(TypedDict):
     conversation_info: ConversationInfo
     current_turn: int
-    ref_problem_src: str
     state_outcome: StateOutcome
 
 
@@ -153,7 +164,9 @@ def create_prompt_handler(
     Create the prompt for the model.
     """
     config = runtime.context.config
+    prompt_llm = runtime.context.prompt_llm
     work = runtime.context.work
+    ref_problem_src = runtime.context.ref_problem_src
     conv_info = state['conversation_info']
     current_turn = state['current_turn']
 
@@ -164,12 +177,11 @@ def create_prompt_handler(
         )
 
     # initialize this round's prompt with the information so far
-    # TODO build llm prompt should just be another node I guess, conditioned on
-    # the generation type (i.e. simple or gepa)
-    conv_info.input_prompt[current_turn] = build_llm_prompt( #build_llm_prompt_for_turn(
+    conv_info.input_prompt[current_turn] = build_llm_prompt(
         config=config,
+        prompt_llm=prompt_llm,
         turn=current_turn,
-        ref_arch_src=state['ref_problem_src'],
+        ref_arch_src=ref_problem_src,
         kernels=conv_info.kernel_code,
         eval_result=conv_info.eval_result,
         profiler_result=conv_info.profiler_result,
@@ -188,7 +200,7 @@ def query_llm_handler(
     """
     config = runtime.context.config
     work = runtime.context.work
-    llm = runtime.context.llm
+    code_llm = runtime.context.code_llm
     current_turn = state['current_turn']
     conv_info = state['conversation_info']
 
@@ -199,7 +211,7 @@ def query_llm_handler(
         )
 
     # query LLM
-    model_response: AIMessage = llm.invoke(conv_info.input_prompt[current_turn])
+    model_response: AIMessage = code_llm.invoke(conv_info.input_prompt[current_turn])
 
     conv_info.model_response[current_turn] = model_response.content
     conv_info.token_usage[current_turn] = model_response.usage_metadata
@@ -230,6 +242,7 @@ def compile_handler(
     Logic for the CPU compilation state.
     """
     config = runtime.context.config
+    summary_llm = runtime.context.summary_llm
     work = runtime.context.work
     current_turn = state['current_turn']
     conv_info = state['conversation_info']
@@ -242,7 +255,7 @@ def compile_handler(
 
     with runtime.context.worker_semaphore:
         # compile kernel and build cache
-        returncode, stdout, err = compile_single_sample(
+        returncode, stdout, stderr = compile_single_sample(
             kernel_src=conv_info.kernel_code[current_turn],
             gpu_arch=config.gpu_arch,
             build_dir=runtime.context.build_dir,
@@ -252,7 +265,7 @@ def compile_handler(
     if config.verbose:
         print(f"[COMPILE {work.problem_id}/{work.sample_id}] Return code: {returncode}")
         print(f"[COMPILE {work.problem_id}/{work.sample_id}] Compile stdout: {stdout}")
-        print(f"[COMPILE {work.problem_id}/{work.sample_id}] Compile stderr: {err}")
+        print(f"[COMPILE {work.problem_id}/{work.sample_id}] Compile stderr: {stderr}")
 
     if returncode == 0:
         # write partial eval result here, since compilation succeeded
@@ -266,12 +279,23 @@ def compile_handler(
         )
         state['state_outcome'] = StateOutcome.CompileSuccess
     else:
+        # summarize the relevant parts of the output; this should curb
+        # over-verbose output from the compiler on some error types
+        compile_summary = summary_llm.invoke([
+            {"role": "system", "content": COMPILE_SUMMARY_SYSTEM_PROMPT},
+            {"role": "user", "content": COMPILE_SUMMARY_USER_INPUT.format(stdout=stdout, stderr=stderr)},
+        ])
+        conv_info.compile_summary[current_turn] = {
+            "content": compile_summary['content'],
+            "token_usage": compile_summary['usage_metadata'],
+        }
+
         # register compilation failure as eval result
         conv_info.eval_result[current_turn] = kernel_eval.KernelExecResult(
             compiled=False,
             correctness=False,
             metadata={
-                "compiler_error": f"Compilation failed.\nstdout: {stdout}\nstderr: {err}",
+                "compiler_error": f"Compilation failed.\nstdout: {stdout}\nstderr: {stderr}",
                 "hardware": "cpu",
                 "device": "cpu"
             }
@@ -287,8 +311,10 @@ def correctness_check_handler(
     Check kernel code correctness.
     """
     config = runtime.context.config
+    summary_llm = runtime.context.summary_llm
     orchestrator = runtime.context.orchestrator
     work = runtime.context.work
+    ref_problem_src = runtime.context.ref_problem_src
     current_turn = state['current_turn']
     conv_info = state['conversation_info']
 
@@ -317,7 +343,7 @@ def correctness_check_handler(
         proc = mp.Process(
             target=evaluate_single_sample_src_mp,
             args=(
-                state['ref_problem_src'],
+                ref_problem_src,
                 conv_info.kernel_code[current_turn],
                 config,
                 runtime.context.build_dir,
@@ -364,6 +390,16 @@ def correctness_check_handler(
             if result is not None and result.compiled and result.correctness:
                 state['state_outcome'] = StateOutcome.CorrectnessSuccess
             else:
+                # summarize the correctness error to aid in the next round
+                runtime_summary = summary_llm.invoke([
+                    {"role": "system", "content": RUNTIME_SUMMARY_SYSTEM_PROMPT},
+                    {"role": "user", "content": RUNTIME_SUMMARY_USER_INPUT.format(metadata=str(result.metadata))},
+                ])
+                conv_info.runtime_summary[current_turn] = {
+                    "content": runtime_summary['content'],
+                    "token_usage": runtime_summary['usage_metadata'],
+                }
+
                 state['state_outcome'] = StateOutcome.CorrectnessFail
 
             if config.verbose:
@@ -387,8 +423,10 @@ def performance_handler(
     Logic for the performance state. This is for profiling code.
     """
     config = runtime.context.config
+    summary_llm = runtime.context.summary_llm
     orchestrator = runtime.context.orchestrator
     work = runtime.context.work
+    ref_problem_src = runtime.context.ref_problem_src
     current_turn = state['current_turn']
     conv_info = state['conversation_info']
 
@@ -414,7 +452,7 @@ def performance_handler(
         proc = mp.Process(
             target=get_torch_profiler_info_mp,
             args=(
-                state['ref_problem_src'],
+                ref_problem_src,
                 conv_info.kernel_code[current_turn],
                 runtime.context.build_dir,
                 gpu_id,
@@ -428,6 +466,18 @@ def performance_handler(
         result = result_queue.get()
 
         conv_info.profiler_result[current_turn] = result
+
+        # summarize the profiler output
+        profiler_summary = summary_llm.invoke(
+            [
+                {"role": "system", "content": PROFILER_SUMMARY_SYSTEM_PROMPT},
+                {"role": "user", "content": PROFILER_SUMMARY_USER_INPUT.format(profiler_output=result)},
+            ]
+        )
+        conv_info.profiler_summary[current_turn] = {
+            "content": profiler_summary['content'],
+            "token_usage": profiler_summary['usage_metadata'],
+        }
 
         if config.verbose:
             print(
@@ -516,10 +566,6 @@ def _init_state_machine_graph() -> CompiledStateGraph:
         }
     )
     builder.add_edge('create_prompt_handler', 'query_llm_handler')
-    # TODO should be more complex,
-    # i.e. if the user doesn't want a compile phase, move to
-    # finish_handler (this is to emulate the transitions); can as well
-    # just leave it out if i'll always just run this anyway
     builder.add_conditional_edges(
         'query_llm_handler',
         lambda state: state['state_outcome'],
@@ -572,27 +618,31 @@ def init_and_run_graph(
     worker_semaphore: mp.Semaphore,
 ):
     try:
-        # get llm
-        llm = create_llm(
+        base_llm_opts = {
             # sampling
-            temperature=(
+            'temperature': (
                 0.0 if config.greedy_sample else config.temperature
             ),
-            top_p=config.top_p,
-            top_k=config.top_k,
-            max_tokens=config.max_tokens,
+            'top_p': config.top_p,
+            'top_k': config.top_k,
+            'max_tokens': config.max_tokens,
 
             # reasoning models
-            use_reasoning_model=config.reasoning_model, # claude, gpt, gemini
-            reasoning_effort=config.reasoning_effort, # gpt-5 only
-            budget_tokens=config.reasoning_budget_tokens, # claude
+            'use_reasoning_model': config.reasoning_model, # claude, gpt, gemini
+            'reasoning_effort': config.reasoning_effort, # gpt-5 only
+            'budget_tokens': config.reasoning_budget_tokens, # claude
 
             # server type
-            server_port=config.server_port,
-            server_address=config.server_address,
-            server_type=config.server_type,
-            model_name=config.model_name,
-        )
+            'server_port': config.server_port,
+            'server_address': config.server_address,
+            'server_type': config.server_type,
+            'model_name': config.model_name,
+        }
+
+        # get llms (these opts may be different in the future)
+        code_llm = create_llm(**base_llm_opts)
+        prompt_llm = create_llm(**base_llm_opts)
+        summary_llm = create_llm(**base_llm_opts)
 
         # build graph
         graph = _init_state_machine_graph()
@@ -602,6 +652,10 @@ def init_and_run_graph(
             'process_id': process_id,
             'config': config,
             'work': work,
+
+            # contains the reference problem in Python code as a string;
+            # load it from KernelBench repo
+            'ref_problem_src': read_file(work.problem_path),
             'logger': CaesarLogger(
                 os.path.join(
                     config.log_dir_prefix,
@@ -619,17 +673,14 @@ def init_and_run_graph(
             ),
             'orchestrator': orchestrator,
             'worker_semaphore': worker_semaphore,
-            'llm': llm,
+            'code_llm': code_llm,
+            'prompt_llm': prompt_llm,
+            'summary_llm': summary_llm,
         }
         initial_state: CaesarGraphState = {
             'conversation_info': ConversationInfo(),
-
             'current_turn': 1,
             'state_outcome': StateOutcome.EndRun,
-
-            # contains the reference problem in Python code as a string
-            # load it from KernelBench repo
-            'ref_problem_src': read_file(work.problem_path),
         }
 
         # launch graph

@@ -355,19 +355,20 @@ def _init_prompt_state_machine_graph() -> CompiledStateGraph:
 
 def build_llm_prompt(
     config: CaesarRunConfig,
+    prompt_llm: CompiledStateGraph,
     turn: int,
     ref_arch_src: str,
     kernels: dict,
     eval_result: dict,
     profiler_result: dict,
     max_profiler_feedback_length: int,
-) -> PromptGraphState:
+) -> str:
 
     # init prompt builder graph
     prompt_graph = _init_prompt_state_machine_graph()
 
     # run
-    return prompt_graph.invoke({
+    prompt = prompt_graph.invoke({
         'prompt': '',
         'best_kernel_idx': None,
         'last_kernel_idx': None,
@@ -380,3 +381,5 @@ def build_llm_prompt(
         'profiler_result': profiler_result,
         'max_profiler_feedback_length': max_profiler_feedback_length
     })['prompt']
+
+    return prompt

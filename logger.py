@@ -71,6 +71,9 @@ class CaesarLogger:
         self.current_log[turn]['token_usage'] = llm_info.token_usage.get(turn, '')
         self.current_log[turn]['eval_result'] = llm_info.eval_result.get(turn, '')
         self.current_log[turn]['profiler_result'] = llm_info.profiler_result.get(turn, '')
+        self.current_log[turn]['compile_summary'] = llm_info.compile_summary.get(turn, '')
+        self.current_log[turn]['runtime_summary'] = llm_info.runtime_summary.get(turn, '')
+        self.current_log[turn]['profiler_summary'] = llm_info.profiler_summary.get(turn, '')
 
     def update_turn_and_log(self, turn: int, llm_info) -> None:
         """
