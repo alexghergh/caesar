@@ -283,8 +283,8 @@ def compile_handler(
             {"role": "user", "content": COMPILE_SUMMARY_USER_INPUT.format(stdout=stdout, stderr=stderr)},
         ])
         conv_info.compile_summary[current_turn] = {
-            "content": compile_summary['content'],
-            "token_usage": compile_summary['usage_metadata'],
+            "content": compile_summary.content,
+            "token_usage": compile_summary.usage_metadata,
         }
 
         # register compilation failure as eval result
@@ -393,8 +393,8 @@ def correctness_check_handler(
                     {"role": "user", "content": RUNTIME_SUMMARY_USER_INPUT.format(metadata=str(result.metadata))},
                 ])
                 conv_info.runtime_summary[current_turn] = {
-                    "content": runtime_summary['content'],
-                    "token_usage": runtime_summary['usage_metadata'],
+                    "content": runtime_summary.content,
+                    "token_usage": runtime_summary.usage_metadata,
                 }
 
                 state['state_outcome'] = StateOutcome.CorrectnessFail
@@ -472,8 +472,8 @@ def performance_handler(
             ]
         )
         conv_info.profiler_summary[current_turn] = {
-            "content": profiler_summary['content'],
-            "token_usage": profiler_summary['usage_metadata'],
+            "content": profiler_summary.content,
+            "token_usage": profiler_summary.usage_metadata,
         }
 
         if config.verbose:
