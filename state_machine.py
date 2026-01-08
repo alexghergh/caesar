@@ -729,8 +729,9 @@ def run_state_machine(
     # trajectories or not etc.
 
     # log config with initial params
-    Path(config.log_dir_prefix).mkdir(parents=True, exist_ok=True)
-    with open(os.path.join(config.log_dir_prefix, 'config.json'), 'w') as f:
+    log_dir = os.path.join(config.log_dir_prefix, config.run_group, config.run_name)
+    Path(log_dir).mkdir(parents=True, exist_ok=True)
+    with open(os.path.join(log_dir, 'config.json'), 'w') as f:
         json.dump(ensure_json_serializable(config.to_dict()), f, indent=2)
 
     # launch all samples on different sub-processes and wait for completion
