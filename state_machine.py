@@ -261,8 +261,8 @@ def compile_handler(
 
     if config.verbose:
         print(f"[COMPILE {work.problem_id}/{work.sample_id}] Return code: {returncode}")
-        print(f"[COMPILE {work.problem_id}/{work.sample_id}] Compile stdout: ...{stdout[-100:]}")
-        print(f"[COMPILE {work.problem_id}/{work.sample_id}] Compile stderr: ...{stderr[-100:]}")
+        print(f"[COMPILE {work.problem_id}/{work.sample_id}] Compile stdout: ...{stdout[-1000:]}")
+        print(f"[COMPILE {work.problem_id}/{work.sample_id}] Compile stderr: ...{stderr[-1000:]}")
 
     if returncode == 0:
         # write partial eval result here, since compilation succeeded
@@ -278,10 +278,19 @@ def compile_handler(
     else:
         # summarize the relevant parts of the output; this should curb
         # over-verbose output from the compiler on some error types
-        compile_summary = summary_llm.invoke([
-            {"role": "system", "content": COMPILE_SUMMARY_SYSTEM_PROMPT},
-            {"role": "user", "content": COMPILE_SUMMARY_USER_INPUT.format(stdout=stdout, stderr=stderr)},
-        ])
+        compile_summary = summary_llm.invoke(
+            [
+                {"role": "system", "content": COMPILE_SUMMARY_SYSTEM_PROMPT},
+                {
+                    "role": "user",
+                    "content": COMPILE_SUMMARY_USER_INPUT.format(
+                        kernel_code=conv_info.kernel_code[current_turn],
+                        stdout=stdout,
+                        stderr=stderr,
+                    ),
+                },
+            ]
+        )
         conv_info.compile_summary[current_turn] = {
             "content": compile_summary.content,
             "token_usage": compile_summary.usage_metadata,
@@ -388,10 +397,18 @@ def correctness_check_handler(
                 state['state_outcome'] = StateOutcome.CorrectnessSuccess
             else:
                 # summarize the correctness error to aid in the next round
-                runtime_summary = summary_llm.invoke([
-                    {"role": "system", "content": RUNTIME_SUMMARY_SYSTEM_PROMPT},
-                    {"role": "user", "content": RUNTIME_SUMMARY_USER_INPUT.format(metadata=str(result.metadata))},
-                ])
+                runtime_summary = summary_llm.invoke(
+                    [
+                        {"role": "system", "content": RUNTIME_SUMMARY_SYSTEM_PROMPT},
+                        {
+                            "role": "user",
+                            "content": RUNTIME_SUMMARY_USER_INPUT.format(
+                                kernel_code=conv_info.kernel_code[current_turn],
+                                metadata=result.metadata['correctness_issue']
+                            ),
+                        },
+                    ]
+                )
                 conv_info.runtime_summary[current_turn] = {
                     "content": runtime_summary.content,
                     "token_usage": runtime_summary.usage_metadata,
@@ -468,7 +485,13 @@ def performance_handler(
         profiler_summary = summary_llm.invoke(
             [
                 {"role": "system", "content": PROFILER_SUMMARY_SYSTEM_PROMPT},
-                {"role": "user", "content": PROFILER_SUMMARY_USER_INPUT.format(profiler_output=result)},
+                {
+                    "role": "user",
+                    "content": PROFILER_SUMMARY_USER_INPUT.format(
+                        kernel_code=conv_info.kernel_code[current_turn],
+                        profiler_output=result,
+                    ),
+                },
             ]
         )
         conv_info.profiler_summary[current_turn] = {

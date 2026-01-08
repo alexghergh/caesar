@@ -72,23 +72,39 @@ DO NOT invent anything (such as non-existent errors), DO NOT give any other feed
 
 Output only the summary, without any other text. Keep it short, and be precise and to the point!\n"""
 
-COMPILE_SUMMARY_USER_INPUT = """Compiler std output: {stdout}\n\nCompiler std error: {stderr}\n"""
+COMPILE_SUMMARY_USER_INPUT = """Generated CUDA kernel code:
+
+```python
+{kernel_code}
+```
+
+Compiler standard output:
+{stdout}
+
+Compiler standard error:
+{stderr}\n"""
 
 RUNTIME_SUMMARY_SYSTEM_PROMPT = """You are an expert in summarizing feedback related to CUDA code.
 
-You will receive a runtime trace from the command line for a failed runtime execution of an LLM-generated CUDA kernel, tested on some inputs against its reference PyTorch implementation. You need to summarize this information (in a few paragraphs max) in a way that exposes the most important parts (such as the error itself, why it happened, what it means exactly and possibly how to fix it etc.), ignores irrelevant bits in the output (such as file paths on the current system, other function stack frames in libraries outside the user code etc.), and includes any important information from the runtime trace as-is if you consider that to be important. This information needs to aid in fixing any erros or issues.
+You will receive a runtime trace from the command line for a failed runtime execution of an LLM-generated CUDA kernel, tested on some inputs against its reference PyTorch implementation. You need to summarize this information (in a few lines max) in a way that exposes the most important parts, ignores irrelevant bits in the output (such as file paths on the current system, other function stack frames in libraries outside the user code etc.), and includes any important information from the runtime trace as-is if you consider that to be important. This information needs to aid in fixing any erros or issues on subsequent iterations.
 
 DO NOT invent anything (such as non-existent errors), DO NOT give any other feedback other than what is in the trace, DO include all the important information from the trace regarding the code, DO include relevant bits from the trace as-is if directly relevant to fixing the code.
 
-If the error trace itself is very short (a few lines), you may as well include the full trace and then include the summary as well.
+If the error trace itself is very short (a few lines), you may also include the full trace itself.
 
 Output only the summary, without any other text. Keep it short, and be precise and to the point!\n"""
 
-RUNTIME_SUMMARY_USER_INPUT = """Runtime information: {metadata}"""
+RUNTIME_SUMMARY_USER_INPUT = """Generated CUDA kernel code:
+
+```python
+{kernel_code}
+```
+
+Runtime information: {metadata}\n"""
 
 PROFILER_SUMMARY_SYSTEM_PROMPT = """You are an expert in summarizing feedback related to profiling CUDA code.
 
-You will receive a profiler trace for a CUDA kernel. You need to summarize this information (in a few lines max) in a way that exposes the most important parts and ignores irrelevant bits in the output. Keep the text short and to the point, don't add too much! Ignore any CPU code (things like `cudaDeviceSynchronize` or `cudaLaunchKernel`) which is irrelevant to the CUDA code under test. Focus just on the CUDA GPU code that can be improved in the kernel.
+You will receive a profiler trace for a CUDA kernel. You need to think carefully and summarize this information (in a few lines max) in a way that exposes the most important parts and ignores irrelevant bits in the output, such that a CUDA kernel writing expert can use this information to further optimize the code. Keep the text short and to the point, don't add too much! Ignore any CPU code (things like `cudaDeviceSynchronize` or `cudaLaunchKernel`) which is irrelevant to the CUDA code under test. Focus just on the CUDA GPU code that can be improved in the kernel.
 
 As an example, when the profiler output gets long, you may summarize the information regarding the top hot spots (main bottlenecks) in the code as per the profiler, with info regarding source code file, line number or code instruction, and how much of the time is spent there. These should be the main bottlenecks that an expert in writing CUDA kernels should look at in order to judge where to spend time optimizing.
 
@@ -96,4 +112,12 @@ DO NOT invent anything (such as non-existent information), DO NOT give any other
 
 Output only the summary, without any other text. Keep it short and to the point!\n"""
 
-PROFILER_SUMMARY_USER_INPUT = """Profiler output: {profiler_output}\n"""
+PROFILER_SUMMARY_USER_INPUT = """Generated CUDA kernel code:
+
+```python
+{kernel_code}
+```
+
+Profiler trace:
+
+{profiler_output}\n"""
