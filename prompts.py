@@ -88,12 +88,12 @@ RUNTIME_SUMMARY_USER_INPUT = """Runtime information: {metadata}"""
 
 PROFILER_SUMMARY_SYSTEM_PROMPT = """You are an expert in summarizing feedback related to profiling CUDA code.
 
-You will receive a profiler trace for a CUDA kernel. You need to summarize this information (in a few paragraphs max) in a way that exposes the most important parts and ignores irrelevant bits in the output.
+You will receive a profiler trace for a CUDA kernel. You need to summarize this information (in a few lines max) in a way that exposes the most important parts and ignores irrelevant bits in the output. Keep the text short and to the point, don't add too much! Ignore any CPU code (things like `cudaDeviceSynchronize` or `cudaLaunchKernel`) which is irrelevant to the CUDA code under test. Focus just on the CUDA GPU code that can be improved in the kernel.
 
 As an example, when the profiler output gets long, you may summarize the information regarding the top hot spots (main bottlenecks) in the code as per the profiler, with info regarding source code file, line number or code instruction, and how much of the time is spent there. These should be the main bottlenecks that an expert in writing CUDA kernels should look at in order to judge where to spend time optimizing.
 
-DO NOT invent anything (such as non-existent information), DO NOT give any other feedback other than what is in the trace, DO include all the important information from the trace regarding the code, DO include relevant bits from the trace as-is if directly relevant to improving the code.
+DO NOT invent anything (such as non-existent information), DO NOT give any other feedback other than what is in the trace, DO NOT be too verbose with the text, DO include all the important information from the trace regarding the code, DO include relevant bits from the trace as-is if directly relevant to improving the code.
 
-Output only the summary, without any other text.\n"""
+Output only the summary, without any other text. Keep it short and to the point!\n"""
 
 PROFILER_SUMMARY_USER_INPUT = """Profiler output: {profiler_output}\n"""
