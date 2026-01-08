@@ -318,8 +318,8 @@ def _init_prompt_state_machine_graph() -> CompiledStateGraph:
                 # so far; if we don't have a valid kernel code so far, re-prompt
                 # using the initial prompt
                 runtime.context.turn == 1
-                or runtime.context.kernels is None
-                or all(not v for v in runtime.context.kernels.values())
+                or runtime.context.conv_info.kernel_code is None
+                or all(not v for v in runtime.context.conv_info.kernel_code.values())
             ) else
             'best_and_last_kernel_handler',
         ['initial_instruction_handler', 'best_and_last_kernel_handler']
