@@ -182,10 +182,7 @@ def create_prompt_handler(
         prompt_llm=prompt_llm,
         turn=current_turn,
         ref_arch_src=ref_problem_src,
-        kernels=conv_info.kernel_code,
-        eval_result=conv_info.eval_result,
-        profiler_result=conv_info.profiler_result,
-        max_profiler_feedback_length=4000,  # TODO this is in characters; how big can traces actually get? #self.config.max_feedback_length,
+        conv_info=conv_info,
     )
 
     state['state_outcome'] = StateOutcome.Start

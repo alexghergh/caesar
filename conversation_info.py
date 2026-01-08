@@ -14,9 +14,9 @@ class ConversationInfo:
     token_usage: dict[int, dict] = field(default_factory=dict)
     eval_result: dict[int, dict] = field(default_factory=dict)
     profiler_result: dict[int, str] = field(default_factory=dict)
-    compile_summary: dict[int, str] = field(default_factory=dict)
-    runtime_summary: dict[int, str] = field(default_factory=dict)
-    profiler_summary: dict[int, str] = field(default_factory=dict)
+    compile_summary: dict[int, dict] = field(default_factory=dict)
+    runtime_summary: dict[int, dict] = field(default_factory=dict)
+    profiler_summary: dict[int, dict] = field(default_factory=dict)
 
     def __getitem__(self, key: Any):
         # key is turn / round

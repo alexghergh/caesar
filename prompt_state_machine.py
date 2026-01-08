@@ -9,6 +9,7 @@ from KernelBenchInternal.utils import read_file
 from langgraph.graph.state import CompiledStateGraph, StateGraph
 
 from caesar_config import CaesarRunConfig
+from conversation_info import ConversationInfo
 from prompts import (
     COMPILER_FEEDBACK_PROMPT,
     CORRECTNESS_FEEDBACK_PROMPT,
@@ -43,12 +44,10 @@ KERNEL_BENCH_ARCH_EXAMPLES_PATH = os.path.join(
 @dataclass
 class PromptRuntimeContext:
     config: CaesarRunConfig
+    prompt_llm: CompiledStateGraph
     turn: int
     ref_arch_src: str
-    kernels: dict
-    eval_result: dict
-    profiler_result: dict
-    max_profiler_feedback_length: int
+    conv_info: ConversationInfo
 
 
 class PromptGraphState(TypedDict):
@@ -110,8 +109,8 @@ def best_and_last_kernel_handler(
     """
     Append best and last kernels to the prompt.
     """
-    eval_result = runtime.context.eval_result
-    kernels = runtime.context.kernels
+    eval_result = runtime.context.conv_info.eval_result
+    kernels = runtime.context.conv_info.kernel_code
     prompt = state['prompt']
 
     # get the best kernel so far in terms of runtime (we have kernel code;
@@ -160,7 +159,7 @@ def feedback_decision(
     'final_prompt_handler'
 ]:
     config = runtime.context.config
-    eval_result = runtime.context.eval_result
+    eval_result = runtime.context.conv_info.eval_result
     last_kernel_idx = state['last_kernel_idx']
 
     # we can either give the LLM feedback for the best kernel, or for
@@ -209,7 +208,8 @@ def feedback_decision(
 def compiler_feedback_handler(
     state: PromptGraphState, runtime: Runtime[PromptRuntimeContext]
 ) -> PromptGraphState:
-    eval_result = runtime.context.eval_result
+    eval_result = runtime.context.conv_info.eval_result
+    compile_summary = runtime.context.conv_info.compile_summary
     prompt = state['prompt']
     last_kernel_idx = state['last_kernel_idx']
 
@@ -219,13 +219,8 @@ def compiler_feedback_handler(
         eval_result[last_kernel_idx].metadata != {} # always True
         and eval_result[last_kernel_idx].compiled is False # always True
     ):
-        metadata = eval_result[last_kernel_idx].metadata
-        metadata.pop("hardware", None)
-        metadata.pop("device", None)
-        key = next(iter(metadata))
-
         prompt += COMPILER_FEEDBACK_PROMPT.format(
-            compiler_feedback=f"{key}: {metadata[key]}"
+            compiler_feedback=compile_summary[last_kernel_idx]["content"]
         )
         prompt += REFLECTION_COMPILER_FEEDBACK_INSTRUCTION
 
@@ -235,18 +230,12 @@ def compiler_feedback_handler(
 def correctness_feedback_handler(
     state: PromptGraphState, runtime: Runtime[PromptRuntimeContext]
 ) -> PromptGraphState:
-    eval_result = runtime.context.eval_result
+    runtime_summary = runtime.context.conv_info.runtime_summary
     prompt = state['prompt']
     last_kernel_idx = state['last_kernel_idx']
 
-    metadata = eval_result[last_kernel_idx].metadata
-    metadata.pop("hardware", None)
-    metadata.pop("device", None)
-    issue = metadata.get("correctness_issue", "")
-    issue = metadata.get("runtime_error", "") if issue == "" else issue
-
     prompt += CORRECTNESS_FEEDBACK_PROMPT.format(
-        correctness_feedback=f"{issue}"
+        correctness_feedback=runtime_summary[last_kernel_idx]['content'],
     )
     prompt += REFLECTION_CORRECTNESS_FEEDBACK_INSTRUCTION
     return { 'prompt': prompt }
@@ -255,9 +244,8 @@ def correctness_feedback_handler(
 def profiler_feedback_handler(
     state: PromptGraphState, runtime: Runtime[PromptRuntimeContext]
 ) -> PromptGraphState:
-    eval_result = runtime.context.eval_result
-    profiler_result = runtime.context.profiler_result
-    max_profiler_feedback_length = runtime.context.max_profiler_feedback_length
+    eval_result = runtime.context.conv_info.eval_result
+    profiler_summary = runtime.context.conv_info.profiler_summary
     prompt = state['prompt']
     best_kernel_idx = state['best_kernel_idx']
     last_kernel_idx = state['last_kernel_idx']
@@ -265,13 +253,11 @@ def profiler_feedback_handler(
     # always include best kernel profiler feedback if available
     if (
         best_kernel_idx is not None
-        and profiler_result.get(best_kernel_idx, "") != ""
+        and profiler_summary.get(best_kernel_idx, "") != ""
     ):
         prompt += PROFILER_FEEDBACK_PROMPT.format(
             kernel="best",
-            profiler_feedback=profiler_result[best_kernel_idx][
-                :max_profiler_feedback_length
-            ],
+            profiler_feedback=profiler_summary[best_kernel_idx]['content'],
             runtime_ms=eval_result[best_kernel_idx].runtime,
         )
 
@@ -284,7 +270,7 @@ def profiler_feedback_handler(
         # if there's no profiler feedback, we can be sure something
         # was wrong during compilation or runtime; skip the rest of
         # the checks
-        and profiler_result.get(last_kernel_idx, "") != ""
+        and profiler_summary.get(last_kernel_idx, "") != ""
 
         # last kernel is slower than the best kernel
         and eval_result[last_kernel_idx].runtime >
@@ -292,9 +278,7 @@ def profiler_feedback_handler(
     ):
         prompt += PROFILER_FEEDBACK_PROMPT.format(
             kernel="previous",
-            profiler_feedback=profiler_result[last_kernel_idx][
-                :max_profiler_feedback_length
-            ],
+            profiler_feedback=profiler_summary[last_kernel_idx]['content'],
             runtime_ms=eval_result[last_kernel_idx].runtime,
         )
 
@@ -358,10 +342,7 @@ def build_llm_prompt(
     prompt_llm: CompiledStateGraph,
     turn: int,
     ref_arch_src: str,
-    kernels: dict,
-    eval_result: dict,
-    profiler_result: dict,
-    max_profiler_feedback_length: int,
+    conv_info: ConversationInfo,
 ) -> str:
 
     # init prompt builder graph
@@ -374,12 +355,10 @@ def build_llm_prompt(
         'last_kernel_idx': None,
     }, context={
         'config': config,
+        'prompt_llm': prompt_llm,
         'turn': turn,
         'ref_arch_src': ref_arch_src,
-        'kernels': kernels,
-        'eval_result': eval_result,
-        'profiler_result': profiler_result,
-        'max_profiler_feedback_length': max_profiler_feedback_length
+        'conv_info': conv_info,
     })['prompt']
 
     return prompt
