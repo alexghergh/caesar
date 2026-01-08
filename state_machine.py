@@ -264,8 +264,8 @@ def compile_handler(
 
     if config.verbose:
         print(f"[COMPILE {work.problem_id}/{work.sample_id}] Return code: {returncode}")
-        print(f"[COMPILE {work.problem_id}/{work.sample_id}] Compile stdout: {stdout}")
-        print(f"[COMPILE {work.problem_id}/{work.sample_id}] Compile stderr: {stderr}")
+        print(f"[COMPILE {work.problem_id}/{work.sample_id}] Compile stdout: ...{stdout[-100:]}")
+        print(f"[COMPILE {work.problem_id}/{work.sample_id}] Compile stderr: ...{stderr[-100:]}")
 
     if returncode == 0:
         # write partial eval result here, since compilation succeeded
