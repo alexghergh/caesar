@@ -31,7 +31,7 @@ class CaesarRunConfig(Config):
 
         # reasoning models setup
         self.reasoning_model = False
-        self.reasoning_effort = '' # gpt-5 only; can be 'low', 'high', 'medium'
+        self.reasoning_effort = '' # gpt-5 or gpt-oss only; can be 'low', 'high', 'medium'
         self.reasoning_budget_tokens = 0 # claude models only; if 0, set to 4096
 
         # prompt feedback options

@@ -41,6 +41,8 @@ dataset_name_to_dataset = {
     "KernelBench/level2-random": KERNELBENCH_LEVEL_2_RANDOM_SUBSET_DATASET,
     "KernelBench/level3-random": KERNELBENCH_LEVEL_3_RANDOM_SUBSET_DATASET,
 
+    "KernelBench/levels12-subset": KERNELBENCH_LEVEL_1_SUBSET_DATASET + KERNELBENCH_LEVEL_2_SUBSET_DATASET,
+
     # debug
     "KernelBench/level1-test": [
         os.path.join(KERNEL_BENCH_PATH, "KernelBench", "level1", "23_Softmax.py")
