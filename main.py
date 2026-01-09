@@ -17,6 +17,7 @@ from KernelBenchInternal.dataset import (
     KERNELBENCH_LEVEL_3_DATASET,
     KERNELBENCH_LEVEL_3_SUBSET_DATASET,
     KERNELBENCH_LEVEL_3_RANDOM_SUBSET_DATASET,
+    KERNELBENCH_LEVELS_12_REPRESENTATIVE_DATASET,
 )
 
 
@@ -41,7 +42,7 @@ dataset_name_to_dataset = {
     "KernelBench/level2-random": KERNELBENCH_LEVEL_2_RANDOM_SUBSET_DATASET,
     "KernelBench/level3-random": KERNELBENCH_LEVEL_3_RANDOM_SUBSET_DATASET,
 
-    "KernelBench/levels12-subset": KERNELBENCH_LEVEL_1_SUBSET_DATASET + KERNELBENCH_LEVEL_2_SUBSET_DATASET,
+    "KernelBench/levels12-subset": KERNELBENCH_LEVELS_12_REPRESENTATIVE_DATASET,
 
     # debug
     "KernelBench/level1-test": [
