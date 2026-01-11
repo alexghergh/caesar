@@ -397,6 +397,11 @@ def correctness_check_handler(
                 state['state_outcome'] = StateOutcome.CorrectnessSuccess
             else:
                 # summarize the correctness error to aid in the next round
+                meta = result.metadata.pop("correctness_issue", "")
+                if meta == "":
+                    meta = result.metadata.pop("cuda_error", "")
+                if meta == "":
+                    meta = result.metadata.pop("other_error", "")
                 runtime_summary = summary_llm.invoke(
                     [
                         {"role": "system", "content": RUNTIME_SUMMARY_SYSTEM_PROMPT},
@@ -404,7 +409,7 @@ def correctness_check_handler(
                             "role": "user",
                             "content": RUNTIME_SUMMARY_USER_INPUT.format(
                                 kernel_code=conv_info.kernel_code[current_turn],
-                                metadata=result.metadata['correctness_issue']
+                                metadata=meta,
                             ),
                         },
                     ]
