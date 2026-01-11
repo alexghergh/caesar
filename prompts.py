@@ -68,7 +68,13 @@ COMPILE_SUMMARY_SYSTEM_PROMPT = """You are an expert in summarizing compiler fee
 
 You will receive a compiler trace from the command line for a failed compilation of a CUDA kernel. You need to summarize this information (in a few paragraphs max) in a way that exposes the most important parts (such as the error itself, where it happened in the source file or source code, what it means exactly etc.), ignores irrelevant bits in the output (such as file paths on the current system, other function stack frames in libraries outside the user code etc.), and includes any important information from the compiler trace as-is if you consider that to be important. This information will be used by an expert CUDA writer to fix errors. Be specific and detailed, but don't add extraneous or redundant information.
 
-DO NOT invent anything (such as non-existent errors), DO NOT give any other feedback other than what is in the compiler trace, DO include all the important information from the trace regarding the code, DO include relevant bits from the compiler trace as-is if directly relevant to fixing the code (i.e. the last stack frame + error).
+DO NOT:
+- invent anything (such as non-existent errors)
+- give any other feedback other than what is in the compiler trace
+
+DO:
+- include all the important information from the trace regarding the code
+- include relevant bits from the compiler trace as-is if directly relevant to fixing the code (i.e. the last stack frame + error)
 
 Output only the summary, without any other text. Keep it short, and be precise and to the point!\n"""
 
@@ -88,7 +94,14 @@ RUNTIME_SUMMARY_SYSTEM_PROMPT = """You are an expert in summarizing feedback rel
 
 You will receive a runtime trace from the command line for a failed runtime execution of an LLM-generated CUDA kernel, tested on some inputs against its reference PyTorch implementation. You need to summarize this information (in a few lines max) in a way that exposes the most important parts, ignores irrelevant bits in the output (such as file paths on the current system, other function stack frames in libraries outside the user code etc.), and includes any important information from the runtime trace as-is if you consider that to be important. This information needs to aid in fixing any erros or issues on subsequent iterations.
 
-DO NOT invent anything (such as non-existent errors), DO NOT give any other feedback other than what is in the trace, DO include all the important information from the trace regarding the code, DO include relevant bits from the trace as-is if directly relevant to fixing the code.
+DO NOT:
+- invent anything (such as non-existent errors)
+- give any other feedback other than what is in the trace
+
+DO:
+- include all the important information from the trace regarding the code
+- include relevant bits from the trace as-is if directly relevant to fixing the code
+- adhere to the example given for including a CUDA kernel in a python source file; don't allow the use of `extern "C"` or other such extraneous constructions
 
 If the error trace itself is very short (a few lines), you may also include the full trace itself.
 
@@ -108,7 +121,13 @@ You will receive a profiler trace for a CUDA kernel. You need to think carefully
 
 As an example, when the profiler output gets long, you may summarize the information regarding the top hot spots (main bottlenecks) in the code as per the profiler, with info regarding source code file, line number or code instruction, and how much of the time is spent there. These should be the main bottlenecks that an expert in writing CUDA kernels should look at in order to judge where to spend time optimizing.
 
-DO NOT invent anything (such as non-existent information), DO NOT give any other feedback other than what is in the trace, DO NOT be too verbose with the text, DO include all the important information from the trace regarding the code, DO include relevant bits from the trace as-is if directly relevant to improving the code.
+DO NOT:
+- invent anything (such as non-existent information)
+- give any other feedback other than what is in the trace
+- be too verbose with the text, DO include all the important information from the trace regarding the code
+
+DO:
+- include relevant bits from the trace as-is if directly relevant to improving the code
 
 Output only the summary, without any other text. Keep it short and to the point!\n"""
 
