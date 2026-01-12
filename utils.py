@@ -324,12 +324,15 @@ def create_llm(
     match server_type:
         case 'openai':
             client = ChatOpenAI(
-                n=num_completions,
+                model=model_name,
                 api_key=OPENAI_KEY,
                 timeout=None,
                 max_retries=0,
                 max_completion_tokens=max_tokens,
-                reasoning_effort=reasoning_effort if use_reasoning_model else "",
+                reasoning={
+                    'effort': reasoning_effort if use_reasoning_model else "low",
+                    'summary': None, # 'detailed', 'auto' or None
+                },
             )
         case 'anthropic':
             client = ChatAnthropic(
@@ -340,7 +343,7 @@ def create_llm(
                 max_tokens=max_tokens,
                 thinking={
                     "type": "enabled" if use_reasoning_model else "disabled",
-                    "budget_tokens": budget_tokens if budget_tokens != 0 else max_tokens // 2
+                    "budget_tokens": budget_tokens if budget_tokens != 0 else 4096,
                 },
             )
         case 'google':
