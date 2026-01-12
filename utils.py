@@ -353,6 +353,7 @@ def create_llm(
                 timeout=None,
                 max_retries=0,
                 max_tokens=max_tokens,
+                thinking_level=reasoning_effort if use_reasoning_model else 'low' # thinking_budget for gemini 2.5 series
             )
         case 'sglang':
             client = ChatOpenAI(
