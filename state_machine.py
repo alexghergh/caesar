@@ -278,15 +278,15 @@ def compile_handler(
     else:
         # summarize the relevant parts of the output; this should curb
         # over-verbose output from the compiler on some error types
-        compile_summary = summary_llm.invoke(
+        compile_summary: AIMessage = summary_llm.invoke(
             [
                 {"role": "system", "content": COMPILE_SUMMARY_SYSTEM_PROMPT},
                 {
                     "role": "user",
                     "content": COMPILE_SUMMARY_USER_INPUT.format(
                         kernel_code=conv_info.kernel_code[current_turn],
-                        stdout=stdout,
-                        stderr=stderr,
+                        stdout=stdout[-100_000:], # limit characters in output
+                        stderr=stderr[-100_000:],
                     ),
                 },
             ]
@@ -372,7 +372,7 @@ def correctness_check_handler(
             )
             state['state_outcome'] = StateOutcome.CorrectnessFail
             conv_info.eval_result[current_turn] = kernel_eval.KernelExecResult(
-                compiled=False,
+                compiled=True,
                 correctness=False,
                 metadata={
                     "timeout_error": "GPU timed out.",
@@ -389,7 +389,9 @@ def correctness_check_handler(
                     result,
                 )
 
-            # record result (fields should be correctly set)
+            # record result (fields should be correctly set, just make sure to
+            # set compile=True)
+            result.compiled = True
             conv_info.eval_result[current_turn] = result
 
             # if compiled and is correct
@@ -397,12 +399,14 @@ def correctness_check_handler(
                 state['state_outcome'] = StateOutcome.CorrectnessSuccess
             else:
                 # summarize the correctness error to aid in the next round
-                meta = result.metadata.pop("correctness_issue", "")
+                meta = result.metadata.get("correctness_issue", "")
                 if meta == "":
-                    meta = result.metadata.pop("cuda_error", "")
+                    meta = result.metadata.get("cuda_error", "")
                 if meta == "":
-                    meta = result.metadata.pop("other_error", "")
-                runtime_summary = summary_llm.invoke(
+                    meta = result.metadata.get("timeout_error", "")
+                if meta == "":
+                    meta = result.metadata.get("other_error", "")
+                runtime_summary: AIMessage = summary_llm.invoke(
                     [
                         {"role": "system", "content": RUNTIME_SUMMARY_SYSTEM_PROMPT},
                         {
@@ -487,7 +491,7 @@ def performance_handler(
         conv_info.profiler_result[current_turn] = result
 
         # summarize the profiler output
-        profiler_summary = summary_llm.invoke(
+        profiler_summary: AIMessage = summary_llm.invoke(
             [
                 {"role": "system", "content": PROFILER_SUMMARY_SYSTEM_PROMPT},
                 {
@@ -741,7 +745,7 @@ def run_state_machine(
 
     # launch all samples on different sub-processes and wait for completion
     sample_proc_list = []
-    for sample in range(0, config.num_samples):
+    for sample in range(config.num_samples):
 
         # create separate work for each sample
         work = copy.deepcopy(workargs)
