@@ -22,8 +22,9 @@ from langsmith import trace
 from eval import (
     compile_single_sample,
     evaluate_single_sample_src_mp,
-    get_torch_profiler_info_mp,
+    get_ncu_kernel_metrics,
 )
+
 from prompt_state_machine import build_llm_prompt
 from prompts import (
     COMPILE_SUMMARY_SYSTEM_PROMPT,
@@ -466,27 +467,14 @@ def performance_handler(
         if config.verbose:
             print(f"[PERF {work.problem_id}/{work.sample_id}] Acquired GPU {gpu_id}")
 
-        # launch a separate process to do the GPU work, as each process
-        # creates a pytorch context on the GPU; we want to avoid each
-        # CPU worker having such a separate context that persists, so
-        # spawning a separate process will clear the cache when the
-        # process finishes
-        result_queue = mp.Queue()
-        proc = mp.Process(
-            target=get_torch_profiler_info_mp,
-            args=(
-                ref_problem_src,
-                conv_info.kernel_code[current_turn],
-                runtime.context.build_dir,
-                gpu_id,
-                result_queue,
-            ),
-        )
         start_time = time.time()
-        proc.start()
-        proc.join() # wait forever for profiler
+        result = get_ncu_kernel_metrics(
+            ref_problem_src,
+            conv_info.kernel_code[current_turn],
+            runtime.context.build_dir,
+            gpu_id,
+        )
         work_time = time.time() - start_time
-        result = result_queue.get()
 
         conv_info.profiler_result[current_turn] = result
 
@@ -765,5 +753,5 @@ def run_state_machine(
     for sample_proc in sample_proc_list:
         sample_proc.join()
 
-        if config.verbose:
-            print(f"State machine worker {os.getpid()} finished work {work}")
+    if config.verbose:
+        print(f"State machine worker {os.getpid()} finished work for problem {work.problem_id}")

@@ -1,9 +1,9 @@
 import os
-import torch
+import subprocess
 import multiprocessing as mp
 
+import torch
 from torch.profiler import profile, ProfilerActivity
-
 from KernelBenchInternal import eval as kernel_eval
 from KernelBenchInternal import utils as kernel_utils
 
@@ -220,3 +220,42 @@ def get_torch_profiler_info_mp(ref_arch_src: str,
         # this might fail if the profiler fails to run for some reason, e.g. due
         # to some CUDA error; in such a case, pretend profiling never happened
         result_queue.put("")
+
+
+def get_ncu_kernel_metrics(ref_arch_src: str,
+                           kernel_src: str,
+                           build_dir: str,
+                           gpu_id: int,
+                           num_trials: int = 100,
+                           metrics: list[str] | str = "all",
+                           seed_num: int = 42) -> str:
+    """
+    Profile a single-kernel run using Nsight Compute (ncu) and capture
+    kernel-level metrics.
+    """
+    kernel_hash = get_kernel_hash(kernel_src)
+    build_dir = os.path.join(build_dir, kernel_hash)
+
+    # tiny launcher that builds inputs, loads the model and runs the kernel
+    # num_trials times
+    launcher = os.path.join("_launch_ncu.py")
+
+    # prepare the metric list argument
+    metrics_arg = ",".join(metrics) if isinstance(metrics, (list, tuple)) else metrics
+
+    cmd = [
+        "ncu",
+        "--target-processes", "all",
+        "--print-summary", "per-kernel",
+        "--metrics", metrics_arg,
+        "--set", "full",
+        "--launch-skip", "2",
+        "--launch-count", str(num_trials),
+        "python", launcher,
+        ref_arch_src, kernel_src, build_dir,
+        str(gpu_id), str(seed_num),
+    ]
+
+    # capture ncu output
+    output = subprocess.check_output(cmd, text=True, stderr=subprocess.STDOUT)
+    return output
