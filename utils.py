@@ -10,7 +10,8 @@ from langchain.agents.middleware import SummarizationMiddleware
 from langchain_openai import ChatOpenAI
 from langchain_anthropic import ChatAnthropic
 from langchain_google_genai import ChatGoogleGenerativeAI
-from prompts import CODE_AGENT_SYSTEM_PROMPT, REVIEWER_AGENT_SYSTEM_PROMPT
+from prompts import REVIEWER_AGENT_SYSTEM_PROMPT
+
 
 
 
@@ -390,8 +391,9 @@ def create_code_agent(
     reasoning_effort: str = 'medium', # for gpt-5
 
     # agent prompt
-    system_prompt: str = CODE_AGENT_SYSTEM_PROMPT,
+    system_prompt: str,
 ) -> CompiledStateGraph:
+
     base_model = create_llm(
         temperature=temperature,
         top_p=top_p,

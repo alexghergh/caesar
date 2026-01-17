@@ -11,12 +11,9 @@ from langgraph.graph.state import CompiledStateGraph, StateGraph
 from caesar_config import CaesarRunConfig
 from conversation_info import ConversationInfo
 from prompts import (
+    CODE_AGENT_SYSTEM_PROMPT,
     COMPILER_FEEDBACK_PROMPT,
     CORRECTNESS_FEEDBACK_PROMPT,
-    EXAMPLE_CUDA_INLINE_SYNTAX,
-    INITIAL_TASK_DESCRIPTION,
-    INITIAL_INSTRUCTION,
-    KERNEL_TO_OPTIMIZE,
     PREVIOUSLY_GENERATED_BEST_AND_LAST_KERNELS,
     PREVIOUSLY_GENERATED_KERNEL,
     PROFILER_FEEDBACK_PROMPT,
@@ -56,18 +53,14 @@ class PromptGraphState(TypedDict):
     last_kernel_idx: int | None
 
 
-def problem_statement_handler(
-    state: PromptGraphState, runtime: Runtime[PromptRuntimeContext]
-) -> PromptGraphState:
+def build_code_agent_system_prompt(
+    config: CaesarRunConfig,
+    ref_arch_src: str,
+) -> str:
     """
-    Construct an initial template prompt to show to the model.
-    Additionally, it contains an example implementation of a custom CUDA kernel
-    in PyTorch.
+    Build the code agent system prompt with hardware, examples, and the
+    reference architecture inlined.
     """
-    # initial prompt (always start from the task description + reference kernel
-    # to optimize)
-
-    # example kernel to show syntax (addition kernel)
     example_ind = 'add'
     example_arch_path = os.path.join(
         KERNEL_BENCH_ARCH_EXAMPLES_PATH, f"model_ex_{example_ind}.py"
@@ -78,29 +71,22 @@ def problem_statement_handler(
     example_arch = read_file(example_arch_path)
     example_new_arch = read_file(example_new_arch_path)
 
-    # construct the initial prompt
-    prompt = INITIAL_TASK_DESCRIPTION.format(
-        hardware_list=", ".join(runtime.context.config.gpu_arch)
+    return CODE_AGENT_SYSTEM_PROMPT.format(
+        hardware_list=", ".join(config.gpu_arch),
+        example_arch_src=example_arch,
+        example_new_arch_src=example_new_arch,
+        arch_src=ref_arch_src,
     )
 
-    prompt += EXAMPLE_CUDA_INLINE_SYNTAX.format(
-        example_arch_src=example_arch, example_new_arch_src=example_new_arch
-    )
 
-    prompt += KERNEL_TO_OPTIMIZE.format(arch_src=runtime.context.ref_arch_src)
-
-    return { 'prompt': prompt }
-
-
-def initial_instruction_handler(
+def empty_prompt_handler(
     state: PromptGraphState, runtime: Runtime[PromptRuntimeContext]
 ) -> PromptGraphState:
     """
-    Add initial instruction to the prompt.
+    Return an empty prompt when no prior kernel context exists.
     """
-    prompt = state['prompt']
-    prompt += INITIAL_INSTRUCTION
-    return { 'prompt': prompt }
+    return { 'prompt': '' }
+
 
 
 def best_and_last_kernel_handler(
@@ -298,8 +284,7 @@ def _init_prompt_state_machine_graph() -> CompiledStateGraph:
     builder = StateGraph(PromptGraphState, context_schema=PromptRuntimeContext)
 
     # prompt states
-    builder.add_node('problem_statement_handler', problem_statement_handler)
-    builder.add_node('initial_instruction_handler', initial_instruction_handler)
+    builder.add_node('empty_prompt_handler', empty_prompt_handler)
     builder.add_node('best_and_last_kernel_handler', best_and_last_kernel_handler)
     builder.add_node('compiler_feedback_handler', compiler_feedback_handler)
     builder.add_node('correctness_feedback_handler', correctness_feedback_handler)
@@ -307,29 +292,26 @@ def _init_prompt_state_machine_graph() -> CompiledStateGraph:
     builder.add_node('final_prompt_handler', final_prompt_handler)
 
     # transitions
-    builder.add_edge(START, 'problem_statement_handler')
-    builder.add_edge('initial_instruction_handler', END)
     builder.add_conditional_edges(
-        'problem_statement_handler',
+        START,
         lambda state, runtime:
-            'initial_instruction_handler'
+            'empty_prompt_handler'
             if (
-                # check whether it's turn 1, or we have any kernels generated
-                # so far; if we don't have a valid kernel code so far, re-prompt
-                # using the initial prompt
                 runtime.context.turn == 1
                 or runtime.context.conv_info.kernel_code is None
                 or all(not v for v in runtime.context.conv_info.kernel_code.values())
             ) else
             'best_and_last_kernel_handler',
-        ['initial_instruction_handler', 'best_and_last_kernel_handler']
+        ['empty_prompt_handler', 'best_and_last_kernel_handler']
     )
     builder.add_conditional_edges('best_and_last_kernel_handler',
                                   feedback_decision)
+    builder.add_edge('empty_prompt_handler', END)
     builder.add_edge('compiler_feedback_handler', END)
     builder.add_edge('correctness_feedback_handler', END)
     builder.add_edge('profiler_feedback_handler', END)
     builder.add_edge('final_prompt_handler', END)
+
 
     graph = builder.compile()
     # print(graph.get_graph().draw_mermaid())

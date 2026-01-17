@@ -1,28 +1,3 @@
-# initial task description
-INITIAL_TASK_DESCRIPTION = """You write custom CUDA kernels to replace the pytorch operators in the given architecture to get speedups. The hardware architecture list for which you have to write the kernels is: {hardware_list}.\n\nYou have complete freedom to choose the set of operators you want to replace. You may make the decision to replace some operators with custom CUDA kernels and leave others unchanged. You may replace multiple operators with custom implementations, consider operator fusion opportunities (combining multiple operators into a single kernel, for example, combining matmul+relu), or algorithmic changes (such as online softmax). You are only limited by your imagination.\n\n"""
-
-EXAMPLE_CUDA_INLINE_SYNTAX = """The following is an example to show you the syntax of embedding custom CUDA operators inline in torch. The example given architecture (in pure pytorch) is:
-
-```python
-{example_arch_src}
-```
-
-The example new architecture with custom CUDA kernels looks like this:
-
-```python
-{example_new_arch_src}
-```\n\n"""
-
-# problem kernel to optimize
-KERNEL_TO_OPTIMIZE = """You are given the following architecture to optimize:
-
-```python
-{arch_src}
-```\n\n"""
-
-# initial instruction for the model to follow
-INITIAL_INSTRUCTION = """Optimize the architecture named Model with custom CUDA operators! Name your optimized output architecture ModelNew. Output the new code in codeblocks. Please generate real code, NOT pseudocode, make sure the code compiles and is fully functional. Just output the new model code, no other text, and NO testing code!\n\n"""
-
 # previous kernel generation, whether it's the best or the last generated
 # kernel; for example, if there's no _best_ kernel (because it didn't compile
 # or it had runtime errors), we're passing the last generated kernel
@@ -65,6 +40,28 @@ REFLECTION_PROFILER_FEEDBACK_INSTRUCTION = """Consider the above profiler output
 
 ## system prompts for llms / agents
 CODE_AGENT_SYSTEM_PROMPT = """You are a CUDA kernel optimization agent.
+
+You write custom CUDA kernels to replace the pytorch operators in the given architecture to get speedups. The hardware architecture list for which you have to write the kernels is: {hardware_list}.
+
+You have complete freedom to choose the set of operators you want to replace. You may make the decision to replace some operators with custom CUDA kernels and leave others unchanged. You may replace multiple operators with custom implementations, consider operator fusion opportunities (combining multiple operators into a single kernel, for example, combining matmul+relu), or algorithmic changes (such as online softmax). You are only limited by your imagination.
+
+The following is an example to show you the syntax of embedding custom CUDA operators inline in torch. The example given architecture (in pure pytorch) is:
+
+```python
+{example_arch_src}
+```
+
+The example new architecture with custom CUDA kernels looks like this:
+
+```python
+{example_new_arch_src}
+```
+
+You are given the following architecture to optimize:
+
+```python
+{arch_src}
+```
 
 Goals:
 - Produce a fully functional optimized PyTorch architecture named ModelNew.
@@ -130,3 +127,4 @@ Profiler trace:
 
 {profiler_output}
 """
+

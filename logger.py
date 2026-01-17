@@ -65,8 +65,16 @@ class CaesarLogger:
         if turn not in self.current_log:
             self.current_log[turn] = {}
 
-        self.current_log['system_prompts']['coding_agent_system_prompt'] = llm_info.coding_agent_system_prompt
-        self.current_log['system_prompts']['reviewer_agent_system_prompt'] = llm_info.rewiever_agent_system_prompt
+        if 'system_prompts' not in self.current_log:
+            self.current_log['system_prompts'] = {}
+
+        self.current_log['system_prompts']['coding_agent_system_prompt'] = (
+            llm_info.coding_agent_system_prompt
+        )
+        self.current_log['system_prompts']['reviewer_agent_system_prompt'] = (
+            llm_info.reviewer_agent_system_prompt
+        )
+
 
         self.current_log[turn]['input_prompt'] = llm_info.input_prompt.get(turn, '')
         self.current_log[turn]['model_response'] = llm_info.model_response.get(turn, '')

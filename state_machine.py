@@ -26,7 +26,8 @@ from eval import (
 
 )
 
-from prompt_state_machine import build_llm_prompt
+from prompt_state_machine import build_llm_prompt, build_code_agent_system_prompt
+from prompts import REVIEWER_AGENT_SYSTEM_PROMPT
 from prompts import (
     COMPILE_SUMMARY_USER_INPUT,
     RUNTIME_SUMMARY_USER_INPUT,
@@ -698,8 +699,19 @@ def init_and_run_graph(
             'model_name': config.model_name,
         }
 
-        # get llms (these opts may be different in the future)
-        code_llm = create_code_agent(**base_llm_opts)
+        ref_problem_src = read_file(work.problem_path)
+
+        # build the code agent system prompt (includes examples + ref kernel)
+        code_agent_system_prompt = build_code_agent_system_prompt(
+            config=config,
+            ref_arch_src=ref_problem_src,
+        )
+
+        # llms
+        code_llm = create_code_agent(
+            **base_llm_opts,
+            system_prompt=code_agent_system_prompt,
+        )
         prompt_llm = create_llm(**base_llm_opts)
         reviewer_agent = create_reviewer_agent(**base_llm_opts)
 
@@ -714,7 +726,7 @@ def init_and_run_graph(
 
             # contains the reference problem in Python code as a string;
             # load it from KernelBench repo
-            'ref_problem_src': read_file(work.problem_path),
+            'ref_problem_src': ref_problem_src,
             'logger': CaesarLogger(
                 os.path.join(
                     config.log_dir_prefix,
@@ -735,17 +747,24 @@ def init_and_run_graph(
             'code_llm': code_llm,
             'prompt_llm': prompt_llm,
             'reviewer_agent': reviewer_agent,
-
         }
+
+        conv_info = ConversationInfo(
+            coding_agent_system_prompt=code_agent_system_prompt,
+            reviewer_agent_system_prompt=REVIEWER_AGENT_SYSTEM_PROMPT,
+        )
+
         initial_state: CaesarGraphState = {
-            'conversation_info': ConversationInfo(),
+            'conversation_info': conv_info,
             'current_turn': 1,
             'state_outcome': StateOutcome.EndRun,
         }
 
         # launch graph
         with trace(name=f'problem-{work.problem_id}-sample-{work.sample_id}'):
-            graph.invoke(initial_state, {"recursion_limit": 1000}, context=initial_context)
+            graph.invoke(
+                initial_state, {"recursion_limit": 1000}, context=initial_context
+            )
 
     finally:
         # update global progress (for each finished sample)
