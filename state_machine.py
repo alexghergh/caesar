@@ -27,17 +27,16 @@ from eval import (
 
 from prompt_state_machine import build_llm_prompt
 from prompts import (
-    COMPILE_SUMMARY_SYSTEM_PROMPT,
     COMPILE_SUMMARY_USER_INPUT,
-    RUNTIME_SUMMARY_SYSTEM_PROMPT,
     RUNTIME_SUMMARY_USER_INPUT,
-    PROFILER_SUMMARY_SYSTEM_PROMPT,
     PROFILER_SUMMARY_USER_INPUT,
 )
+
 from states import StateOutcome
 from work import WorkArgs
 from logger import CaesarLogger
-from utils import ensure_json_serializable, create_llm, create_code_agent
+from utils import ensure_json_serializable, create_llm, create_code_agent, create_reviewer_agent
+
 
 from orchestrator import GPUOrchestrator
 from caesar_config import CaesarRunConfig
@@ -57,7 +56,8 @@ class CaesarRuntimeContext:
     worker_semaphore: mp.Semaphore
     code_llm: CompiledStateGraph
     prompt_llm: CompiledStateGraph
-    summary_llm: CompiledStateGraph
+    reviewer_agent: CompiledStateGraph
+
 
 
 # graph state that is updated when iterating between the state machine rounds
@@ -255,7 +255,8 @@ def compile_handler(
     Logic for the CPU compilation state.
     """
     config = runtime.context.config
-    summary_llm = runtime.context.summary_llm
+    reviewer_agent = runtime.context.reviewer_agent
+
     work = runtime.context.work
     current_turn = state['current_turn']
     conv_info = state['conversation_info']
@@ -294,9 +295,8 @@ def compile_handler(
     else:
         # summarize the relevant parts of the output; this should curb
         # over-verbose output from the compiler on some error types
-        compile_summary: AIMessage = summary_llm.invoke(
-            [
-                {"role": "system", "content": COMPILE_SUMMARY_SYSTEM_PROMPT},
+        reviewer_response = reviewer_agent.invoke({
+            "messages": [
                 {
                     "role": "user",
                     "content": COMPILE_SUMMARY_USER_INPUT.format(
@@ -304,13 +304,23 @@ def compile_handler(
                         stdout=stdout[-100_000:], # limit characters in output
                         stderr=stderr[-100_000:],
                     ),
-                },
+                }
             ]
-        )
+        })
+
+        if isinstance(reviewer_response, dict) and "messages" in reviewer_response:
+            last_message: AIMessage = reviewer_response["messages"][-1]
+            reviewer_content = last_message.content
+            reviewer_usage = getattr(last_message, "usage_metadata", {}) or {}
+        else:
+            reviewer_content = reviewer_response.content
+            reviewer_usage = getattr(reviewer_response, "usage_metadata", {}) or {}
+
         conv_info.compile_summary[current_turn] = {
-            "content": compile_summary.content,
-            "token_usage": compile_summary.usage_metadata,
+            "content": reviewer_content,
+            "token_usage": reviewer_usage,
         }
+
 
         # register compilation failure as eval result
         conv_info.eval_result[current_turn] = kernel_eval.KernelExecResult(
@@ -333,7 +343,8 @@ def correctness_check_handler(
     Check kernel code correctness.
     """
     config = runtime.context.config
-    summary_llm = runtime.context.summary_llm
+    reviewer_agent = runtime.context.reviewer_agent
+
     orchestrator = runtime.context.orchestrator
     work = runtime.context.work
     ref_problem_src = runtime.context.ref_problem_src
@@ -422,22 +433,31 @@ def correctness_check_handler(
                     meta = result.metadata.get("timeout_error", "")
                 if meta == "":
                     meta = result.metadata.get("other_error", "")
-                runtime_summary: AIMessage = summary_llm.invoke(
-                    [
-                        {"role": "system", "content": RUNTIME_SUMMARY_SYSTEM_PROMPT},
+                reviewer_response = reviewer_agent.invoke({
+                    "messages": [
                         {
                             "role": "user",
                             "content": RUNTIME_SUMMARY_USER_INPUT.format(
                                 kernel_code=conv_info.kernel_code[current_turn],
                                 metadata=meta,
                             ),
-                        },
+                        }
                     ]
-                )
+                })
+
+                if isinstance(reviewer_response, dict) and "messages" in reviewer_response:
+                    last_message: AIMessage = reviewer_response["messages"][-1]
+                    reviewer_content = last_message.content
+                    reviewer_usage = getattr(last_message, "usage_metadata", {}) or {}
+                else:
+                    reviewer_content = reviewer_response.content
+                    reviewer_usage = getattr(reviewer_response, "usage_metadata", {}) or {}
+
                 conv_info.runtime_summary[current_turn] = {
-                    "content": runtime_summary.content,
-                    "token_usage": runtime_summary.usage_metadata,
+                    "content": reviewer_content,
+                    "token_usage": reviewer_usage,
                 }
+
 
                 state['state_outcome'] = StateOutcome.CorrectnessFail
 
@@ -462,7 +482,8 @@ def performance_handler(
     Logic for the performance state. This is for profiling code.
     """
     config = runtime.context.config
-    summary_llm = runtime.context.summary_llm
+    reviewer_agent = runtime.context.reviewer_agent
+
     orchestrator = runtime.context.orchestrator
     work = runtime.context.work
     ref_problem_src = runtime.context.ref_problem_src
@@ -494,22 +515,31 @@ def performance_handler(
         conv_info.profiler_result[current_turn] = result
 
         # summarize the profiler output
-        profiler_summary: AIMessage = summary_llm.invoke(
-            [
-                {"role": "system", "content": PROFILER_SUMMARY_SYSTEM_PROMPT},
+        reviewer_response = reviewer_agent.invoke({
+            "messages": [
                 {
                     "role": "user",
                     "content": PROFILER_SUMMARY_USER_INPUT.format(
                         kernel_code=conv_info.kernel_code[current_turn],
                         profiler_output=result,
                     ),
-                },
+                }
             ]
-        )
+        })
+
+        if isinstance(reviewer_response, dict) and "messages" in reviewer_response:
+            last_message: AIMessage = reviewer_response["messages"][-1]
+            reviewer_content = last_message.content
+            reviewer_usage = getattr(last_message, "usage_metadata", {}) or {}
+        else:
+            reviewer_content = reviewer_response.content
+            reviewer_usage = getattr(reviewer_response, "usage_metadata", {}) or {}
+
         conv_info.profiler_summary[current_turn] = {
-            "content": profiler_summary.content,
-            "token_usage": profiler_summary.usage_metadata,
+            "content": reviewer_content,
+            "token_usage": reviewer_usage,
         }
+
 
         if config.verbose:
             print(
@@ -674,7 +704,8 @@ def init_and_run_graph(
         # get llms (these opts may be different in the future)
         code_llm = create_code_agent(**base_llm_opts)
         prompt_llm = create_llm(**base_llm_opts)
-        summary_llm = create_llm(**base_llm_opts)
+        reviewer_agent = create_reviewer_agent(**base_llm_opts)
+
 
 
         # build graph
@@ -708,7 +739,8 @@ def init_and_run_graph(
             'worker_semaphore': worker_semaphore,
             'code_llm': code_llm,
             'prompt_llm': prompt_llm,
-            'summary_llm': summary_llm,
+            'reviewer_agent': reviewer_agent,
+
         }
         initial_state: CaesarGraphState = {
             'conversation_info': ConversationInfo(),
