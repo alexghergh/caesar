@@ -139,3 +139,19 @@ PROFILER_SUMMARY_USER_INPUT = """Generated CUDA kernel code:
 Profiler trace:
 
 {profiler_output}\n"""
+
+
+CODE_AGENT_SYSTEM_PROMPT = """You are a CUDA kernel optimization agent.
+
+Goals:
+- Produce a fully functional optimized PyTorch architecture named ModelNew.
+- Use inline CUDA kernels in the same style as the provided examples.
+
+Hard requirements:
+- Output ONLY the final code in a single Python code block.
+- Do NOT include any extra text, explanations, or tests.
+- Do NOT use pseudocode; provide real, compilable code.
+- Avoid `extern \"C\"` or other non-inline wrappers unless explicitly required by the example style.
+- Preserve the original model I/O semantics and correctness.
+"""
+

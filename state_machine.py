@@ -37,7 +37,8 @@ from prompts import (
 from states import StateOutcome
 from work import WorkArgs
 from logger import CaesarLogger
-from utils import ensure_json_serializable, create_llm
+from utils import ensure_json_serializable, create_llm, create_code_agent
+
 from orchestrator import GPUOrchestrator
 from caesar_config import CaesarRunConfig
 from conversation_info import ConversationInfo
@@ -208,15 +209,29 @@ def query_llm_handler(
             f"Round {current_turn}, entering state: QUERY_LLM"
         )
 
-    # query LLM
-    model_response: AIMessage = code_llm.invoke(conv_info.input_prompt[current_turn])
+    # query LLM (agent or base model)
+    response = code_llm.invoke({
+        "messages": [{
+            "role": "user",
+            "content": conv_info.input_prompt[current_turn],
+        }]
+    })
 
-    conv_info.model_response[current_turn] = model_response.content
-    conv_info.token_usage[current_turn] = model_response.usage_metadata
+    if isinstance(response, dict) and "messages" in response:
+        last_message: AIMessage = response["messages"][-1]
+        model_content = last_message.content
+        usage_metadata = getattr(last_message, "usage_metadata", {}) or {}
+    else:
+        model_content = response.content
+        usage_metadata = getattr(response, "usage_metadata", {}) or {}
+
+    conv_info.model_response[current_turn] = model_content
+    conv_info.token_usage[current_turn] = usage_metadata
 
     kernel_code = extract_last_code(
         conv_info.model_response[current_turn], ["python", "cpp"]
     )
+
 
     # if we failed to generate a kernel, simply move to the next round
     if kernel_code is None or len(kernel_code) == 0:
@@ -657,9 +672,10 @@ def init_and_run_graph(
         }
 
         # get llms (these opts may be different in the future)
-        code_llm = create_llm(**base_llm_opts)
+        code_llm = create_code_agent(**base_llm_opts)
         prompt_llm = create_llm(**base_llm_opts)
         summary_llm = create_llm(**base_llm_opts)
+
 
         # build graph
         graph = _init_state_machine_graph()
