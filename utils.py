@@ -423,7 +423,6 @@ def create_code_agent(
     return code_agent
 
 
-
 def create_reviewer_agent(
     temperature: float = 0.0,
     top_p: float = 1.0, # nucleus sampling
@@ -472,4 +471,3 @@ def create_reviewer_agent(
     )
 
     return reviewer_agent
-

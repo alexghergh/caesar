@@ -259,3 +259,26 @@ def get_ncu_kernel_metrics(ref_arch_src: str,
     # capture ncu output
     output = subprocess.check_output(cmd, text=True, stderr=subprocess.STDOUT)
     return output
+
+
+def get_ncu_kernel_metrics_mp(ref_arch_src: str,
+                              kernel_src: str,
+                              build_dir: str,
+                              gpu_id: int,
+                              metrics: list[str] | str,
+                              result_queue: mp.Queue) -> None:
+    """
+    Same as `get_ncu_kernel_metrics`, but meant to be called in a
+    multiprocessing context. It puts the result in a queue instead of returning.
+    """
+    try:
+        info = get_ncu_kernel_metrics(
+            ref_arch_src,
+            kernel_src,
+            build_dir,
+            gpu_id,
+            metrics=metrics,
+        )
+        result_queue.put(info)
+    except Exception:
+        result_queue.put("")

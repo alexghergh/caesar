@@ -22,7 +22,8 @@ from langsmith import trace
 from eval import (
     compile_single_sample,
     evaluate_single_sample_src_mp,
-    get_ncu_kernel_metrics,
+    get_ncu_kernel_metrics_mp,
+
 )
 
 from prompt_state_machine import build_llm_prompt
@@ -504,13 +505,22 @@ def performance_handler(
             print(f"[PERF {work.problem_id}/{work.sample_id}] Acquired GPU {gpu_id}")
 
         start_time = time.time()
-        result = get_ncu_kernel_metrics(
-            ref_problem_src,
-            conv_info.kernel_code[current_turn],
-            runtime.context.build_dir,
-            gpu_id,
+        result_queue = mp.Queue()
+        proc = mp.Process(
+            target=get_ncu_kernel_metrics_mp,
+            args=(
+                ref_problem_src,
+                conv_info.kernel_code[current_turn],
+                runtime.context.build_dir,
+                gpu_id,
+                "all",
+                result_queue,
+            ),
         )
+        proc.start()
+        proc.join() # wait forever for profiler
         work_time = time.time() - start_time
+        result = result_queue.get()
 
         conv_info.profiler_result[current_turn] = result
 
@@ -539,7 +549,6 @@ def performance_handler(
             "content": reviewer_content,
             "token_usage": reviewer_usage,
         }
-
 
         if config.verbose:
             print(
