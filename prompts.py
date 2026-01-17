@@ -63,83 +63,20 @@ PROFILER_FEEDBACK_PROMPT = """The following is profiler feedback over a number o
 REFLECTION_PROFILER_FEEDBACK_INSTRUCTION = """Consider the above profiler output carefully, and further improve and optimize your output architecture ModelNew (keep the same name). Please rewrite the entire kernel to be as fast as possible. Output the new code in codeblocks. Please generate real code, NOT pseudocode, make sure the code compiles and is fully functional. Just output the new model code, no other text, and NO testing code!\n\n"""
 
 
-## system prompts for llms
-COMPILE_SUMMARY_SYSTEM_PROMPT = """You are a judge, tasked with summarizing information for a failed compilation of a CUDA kernel, in a way that allows a kernel writer to fix any issues.
+## system prompts for llms / agents
+CODE_AGENT_SYSTEM_PROMPT = """You are a CUDA kernel optimization agent.
 
-You will receive a compiler trace from the command line for a failed compilation of a CUDA kernel. You need to summarize this information (in a few paragraphs max) in a way that exposes the most important parts (such as the error itself, where it happened in the source file or source code, what it means exactly etc.), ignores irrelevant bits in the output (such as file paths on the current system, other function stack frames in libraries outside the user code etc.), and includes any important information from the compiler trace as-is if you consider that to be important.
+Goals:
+- Produce a fully functional optimized PyTorch architecture named ModelNew.
+- Use inline CUDA kernels in the same style as the provided examples.
 
-This information will be used by an expert CUDA writer to fix errors. Be specific and detailed, and offer ACTIONABLE, CONCRETE suggestions for fixes and improvements.
-
-DO NOT:
-- invent anything (such as non-existent errors)
-- give any other feedback other than what is in the compiler trace
-
-DO:
-- include all the important information from the trace regarding the code
-- include relevant bits from the compiler trace as-is if directly relevant to fixing the code (i.e. the last stack frame + error)
-
-Don't output anything else other than the points mentioned above!\n"""
-
-COMPILE_SUMMARY_USER_INPUT = """Generated CUDA kernel code:
-
-```python
-{kernel_code}
-```
-
-Compiler standard output:
-{stdout}
-
-Compiler standard error:
-{stderr}\n"""
-
-RUNTIME_SUMMARY_SYSTEM_PROMPT = """You are a judge, tasked with summarizing information regarding CUDA kernel runtime, in order for an expert kernel writer to fix any issues.
-
-You will receive a runtime trace from the command line for a failed runtime execution of an LLM-generated CUDA kernel, tested on some inputs against its reference PyTorch implementation. You need to summarize this information in a way that exposes the most important parts, ignores irrelevant bits in the output (such as file paths on the current system, other function stack frames in libraries outside the user code etc.), and includes any important information from the runtime trace as-is if you consider that to be important.
-
-You need to present this information in ACTIONABLE steps and concrete improvement suggestions, such that a kernel writer can use it to further improve a kernel.
-
-DO NOT:
-- invent anything (such as non-existent errors)
-- give any other feedback other than what is in the trace
-
-DO:
-- include all the important information from the trace regarding the code
-- include relevant bits from the trace as-is if directly relevant to fixing the code
-- adhere to the example given for including a CUDA kernel in a python source file; don't allow the use of `extern "C"` or other such extraneous constructions
-
-Don't output any other text aside from the points mentioned above!\n"""
-
-RUNTIME_SUMMARY_USER_INPUT = """Generated CUDA kernel code:
-
-```python
-{kernel_code}
-```
-
-Runtime information: {metadata}\n"""
-
-PROFILER_SUMMARY_SYSTEM_PROMPT = """You are a judge, tasked with summarizing information regarding the performance of a CUDA kernel, in order for an expert kernel writer to further optimize the kernel.
-
-You will receive a profiler trace for a CUDA kernel. You need to think carefully and summarize this information in a way that exposes the most important parts and ignores irrelevant bits in the output, such that a CUDA kernel writing expert can use this information to further optimize the code. Keep the text short and to the point, be brief. Ignore any unnecessary output (such as CPU code, kernel launches etc., things that cannot be influenced) which is irrelevant to the CUDA code under test. Focus just on the CUDA GPU code that can be improved in the kernel.
-
-Your task is to summarize the main bottlenecks in the code, and come up with ACTIONABLE tasks for the kernel writer to implement, in order to improve the kernel performance.
-
-DO NOT:
-- invent anything (such as non-existent information)
-- give any other feedback other than what is in the trace
-- be too verbose with the text, DO include all the important information from the trace regarding hotspots
-
-Don't output any other text aside from the mentioned points above!\n"""
-
-PROFILER_SUMMARY_USER_INPUT = """Generated CUDA kernel code:
-
-```python
-{kernel_code}
-```
-
-Profiler trace:
-
-{profiler_output}\n"""
-
+Hard requirements:
+- Output ONLY the final code in a single Python code block.
+- Do NOT include any extra text, explanations, or tests.
+- Do NOT use pseudocode; provide real, compilable code.
+- Avoid `extern \"C\"` or other non-inline wrappers unless explicitly required by the example style.
+- Preserve the original model I/O semantics and correctness.
+"""
 
 REVIEWER_AGENT_SYSTEM_PROMPT = """You are a CUDA kernel reviewer and adversarial critic for a code generation agent.
 
@@ -155,19 +92,41 @@ Rules:
 - Output only the review content (no preamble, no apologies, no extra commentary).
 """
 
+COMPILE_SUMMARY_USER_INPUT = """## Compilation issue
 
+Generated CUDA kernel code:
 
-CODE_AGENT_SYSTEM_PROMPT = """You are a CUDA kernel optimization agent.
+```python
+{kernel_code}
+```
 
-Goals:
-- Produce a fully functional optimized PyTorch architecture named ModelNew.
-- Use inline CUDA kernels in the same style as the provided examples.
+Compiler standard output:
+{stdout}
 
-Hard requirements:
-- Output ONLY the final code in a single Python code block.
-- Do NOT include any extra text, explanations, or tests.
-- Do NOT use pseudocode; provide real, compilable code.
-- Avoid `extern \"C\"` or other non-inline wrappers unless explicitly required by the example style.
-- Preserve the original model I/O semantics and correctness.
+Compiler standard error:
+{stderr}
 """
 
+RUNTIME_SUMMARY_USER_INPUT = """## Runtime issue
+
+Generated CUDA kernel code:
+
+```python
+{kernel_code}
+```
+
+Runtime information: {metadata}
+"""
+
+PROFILER_SUMMARY_USER_INPUT = """## Profiler output
+
+Generated CUDA kernel code:
+
+```python
+{kernel_code}
+```
+
+Profiler trace:
+
+{profiler_output}
+"""

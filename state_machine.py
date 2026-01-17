@@ -210,7 +210,7 @@ def query_llm_handler(
             f"Round {current_turn}, entering state: QUERY_LLM"
         )
 
-    # query LLM (agent or base model)
+    # query LLM coding agent
     response = code_llm.invoke({
         "messages": [{
             "role": "user",
@@ -218,13 +218,9 @@ def query_llm_handler(
         }]
     })
 
-    if isinstance(response, dict) and "messages" in response:
-        last_message: AIMessage = response["messages"][-1]
-        model_content = last_message.content
-        usage_metadata = getattr(last_message, "usage_metadata", {}) or {}
-    else:
-        model_content = response.content
-        usage_metadata = getattr(response, "usage_metadata", {}) or {}
+    last_message: AIMessage = response["messages"][-1]
+    model_content = last_message.content
+    usage_metadata = last_message.usage_metadata
 
     conv_info.model_response[current_turn] = model_content
     conv_info.token_usage[current_turn] = usage_metadata
@@ -232,7 +228,6 @@ def query_llm_handler(
     kernel_code = extract_last_code(
         conv_info.model_response[current_turn], ["python", "cpp"]
     )
-
 
     # if we failed to generate a kernel, simply move to the next round
     if kernel_code is None or len(kernel_code) == 0:
@@ -296,32 +291,29 @@ def compile_handler(
     else:
         # summarize the relevant parts of the output; this should curb
         # over-verbose output from the compiler on some error types
+        comp_prompt = COMPILE_SUMMARY_USER_INPUT.format(
+            kernel_code=conv_info.kernel_code[current_turn],
+            stdout=stdout[-100_000:], # limit characters in output
+            stderr=stderr[-100_000:],
+        )
+        conv_info.compile_prompt[current_turn] = comp_prompt
         reviewer_response = reviewer_agent.invoke({
             "messages": [
                 {
                     "role": "user",
-                    "content": COMPILE_SUMMARY_USER_INPUT.format(
-                        kernel_code=conv_info.kernel_code[current_turn],
-                        stdout=stdout[-100_000:], # limit characters in output
-                        stderr=stderr[-100_000:],
-                    ),
+                    "content": comp_prompt,
                 }
             ]
         })
 
-        if isinstance(reviewer_response, dict) and "messages" in reviewer_response:
-            last_message: AIMessage = reviewer_response["messages"][-1]
-            reviewer_content = last_message.content
-            reviewer_usage = getattr(last_message, "usage_metadata", {}) or {}
-        else:
-            reviewer_content = reviewer_response.content
-            reviewer_usage = getattr(reviewer_response, "usage_metadata", {}) or {}
+        last_message: AIMessage = reviewer_response["messages"][-1]
+        reviewer_content = last_message.content
+        reviewer_usage = last_message.usage_metadata
 
         conv_info.compile_summary[current_turn] = {
             "content": reviewer_content,
             "token_usage": reviewer_usage,
         }
-
 
         # register compilation failure as eval result
         conv_info.eval_result[current_turn] = kernel_eval.KernelExecResult(
@@ -434,31 +426,29 @@ def correctness_check_handler(
                     meta = result.metadata.get("timeout_error", "")
                 if meta == "":
                     meta = result.metadata.get("other_error", "")
+
+                run_prompt = RUNTIME_SUMMARY_USER_INPUT.format(
+                    kernel_code=conv_info.kernel_code[current_turn],
+                    metadata=meta,
+                )
+                conv_info.runtime_prompt[current_turn] = run_prompt
                 reviewer_response = reviewer_agent.invoke({
                     "messages": [
                         {
                             "role": "user",
-                            "content": RUNTIME_SUMMARY_USER_INPUT.format(
-                                kernel_code=conv_info.kernel_code[current_turn],
-                                metadata=meta,
-                            ),
+                            "content": run_prompt,
                         }
                     ]
                 })
 
-                if isinstance(reviewer_response, dict) and "messages" in reviewer_response:
-                    last_message: AIMessage = reviewer_response["messages"][-1]
-                    reviewer_content = last_message.content
-                    reviewer_usage = getattr(last_message, "usage_metadata", {}) or {}
-                else:
-                    reviewer_content = reviewer_response.content
-                    reviewer_usage = getattr(reviewer_response, "usage_metadata", {}) or {}
+                last_message: AIMessage = reviewer_response["messages"][-1]
+                reviewer_content = last_message.content
+                reviewer_usage = last_message.usage_metadata
 
                 conv_info.runtime_summary[current_turn] = {
                     "content": reviewer_content,
                     "token_usage": reviewer_usage,
                 }
-
 
                 state['state_outcome'] = StateOutcome.CorrectnessFail
 
@@ -525,25 +515,23 @@ def performance_handler(
         conv_info.profiler_result[current_turn] = result
 
         # summarize the profiler output
+        prof_prompt =  PROFILER_SUMMARY_USER_INPUT.format(
+            kernel_code=conv_info.kernel_code[current_turn],
+            profiler_output=result,
+        )
+        conv_info.profiler_prompt[current_turn] = prof_prompt
         reviewer_response = reviewer_agent.invoke({
             "messages": [
                 {
                     "role": "user",
-                    "content": PROFILER_SUMMARY_USER_INPUT.format(
-                        kernel_code=conv_info.kernel_code[current_turn],
-                        profiler_output=result,
-                    ),
+                    "content": prof_prompt,
                 }
             ]
         })
 
-        if isinstance(reviewer_response, dict) and "messages" in reviewer_response:
-            last_message: AIMessage = reviewer_response["messages"][-1]
-            reviewer_content = last_message.content
-            reviewer_usage = getattr(last_message, "usage_metadata", {}) or {}
-        else:
-            reviewer_content = reviewer_response.content
-            reviewer_usage = getattr(reviewer_response, "usage_metadata", {}) or {}
+        last_message: AIMessage = reviewer_response["messages"][-1]
+        reviewer_content = last_message.content
+        reviewer_usage = last_message.usage_metadata
 
         conv_info.profiler_summary[current_turn] = {
             "content": reviewer_content,
@@ -714,8 +702,6 @@ def init_and_run_graph(
         code_llm = create_code_agent(**base_llm_opts)
         prompt_llm = create_llm(**base_llm_opts)
         reviewer_agent = create_reviewer_agent(**base_llm_opts)
-
-
 
         # build graph
         graph = _init_state_machine_graph()
