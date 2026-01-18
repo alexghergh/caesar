@@ -420,18 +420,9 @@ def correctness_check_handler(
 
             # if compiled and is correct
             if result is not None and result.compiled and result.correctness:
-                runtime_ms = result.runtime if result.runtime is not None else -1
-                runtime.context.rag_index.insert_kernel(
-                    conv_info.kernel_code[current_turn],
-                    {
-                        "problem_id": work.problem_id,
-                        "turn": current_turn,
-                        "runtime_ms": runtime_ms,
-                    },
-                )
-
                 state['state_outcome'] = StateOutcome.CorrectnessSuccess
             else:
+
                 # summarize the correctness error to aid in the next round
                 meta = result.metadata.get("correctness_issue", "")
                 if meta == "":

@@ -43,17 +43,6 @@ class RagIndex:
 
         return "\n\n".join(_format_doc(doc) for doc in docs)
 
-    def insert_kernel(self, kernel_code: str, metadata: dict) -> None:
-        doc = Document(
-            page_content=kernel_code,
-            metadata={
-                **metadata,
-                "source_type": "kernel",
-            },
-        )
-        self.vectorstore.add_documents([doc])
-        self.save()
-
 
 def build_or_load_rag_index(
     docs_dir: str,
@@ -199,4 +188,3 @@ def _format_doc(doc: Document) -> str:
     if source:
         header += f" [source: {source}]"
     return f"{header}\n{doc.page_content.strip()}"
-

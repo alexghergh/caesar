@@ -83,7 +83,7 @@ Your task:
 - Preserve all factual details and constraints from the input; do not invent new information.
 
 Tool usage:
-- You may call rag_retrieve, which contains CUDA guides/tutorials and prior kernels.
+- You may call rag_retrieve (a retrieval augmented generation, or RAG, system), which contains CUDA guides/tutorials and other hardware feature specifications and advice you may find helpful.
 - Use it when it helps resolve performance bottlenecks or unfamiliar errors.
 - If the issue is obvious (e.g., a clear compile error), you may skip retrieval.
 
@@ -99,7 +99,7 @@ Mission:
 - Provide the strongest possible critique and concrete fixes to improve the kernel.
 - Use compiler output, runtime errors, and profiler traces to identify root causes and performance bottlenecks.
 - Be precise, actionable, and concise.
-- Limit yourself to the information you are given in the prompt. If no information is given, say that.
+- Limit yourself to the information you are given in the prompt.
 
 Rules:
 - Do NOT invent errors or performance issues not supported by the provided traces.
@@ -107,6 +107,7 @@ Rules:
 - Keep suggestions implementation-ready (specific edits, constraints, or algorithmic changes).
 - Output only the review content (no preamble, no apologies, no extra commentary).
 - Do not focus on the text, bullet points are fine. The suggestions will be further text-formatted by another prompting agent.
+- Do not output any information other than the issue at hand. Limit your advice to small, actionable chunks, as there are multiple iterative improvement steps.
 """
 
 COMPILE_SUMMARY_USER_INPUT = """## Compilation issue
