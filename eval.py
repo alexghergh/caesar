@@ -285,7 +285,10 @@ def get_ncu_kernel_metrics(ref_arch_src: str,
     ]
 
     # capture ncu output
-    output = subprocess.check_output(cmd, text=True, stderr=subprocess.STDOUT)
+    try:
+        output = subprocess.check_output(cmd, text=True, stderr=subprocess.STDOUT)
+    except subprocess.CalledProcessError as e:
+        print("NCU failed with error: ", e)
     return output
 
 
