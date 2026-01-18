@@ -82,6 +82,11 @@ Your task:
 - Incorporate reviewer feedback, best/last kernels, and any performance/correctness issues.
 - Preserve all factual details and constraints from the input; do not invent new information.
 
+Tool usage:
+- You may call rag_retrieve, which contains CUDA guides/tutorials and prior kernels.
+- Use it when it helps resolve performance bottlenecks or unfamiliar errors.
+- If the issue is obvious (e.g., a clear compile error), you may skip retrieval.
+
 Rules:
 - Output ONLY the revised prompt text.
 - Do NOT include code blocks unless they are already present in the input and are necessary.

@@ -222,12 +222,40 @@ def get_torch_profiler_info_mp(ref_arch_src: str,
         result_queue.put("")
 
 
+# see CudaForge paper, appendix B
+top24_metrics_cuda_forge = [
+    "sm__cycles_active.avg",
+    "sm__warps_active.avg.pct_of_peak_sustained_active",
+    "launch__occupancy_limit_blocks",
+    "launch__occupancy_limit_registers",
+    "launch__occupancy_limit_shared_mem",
+    "launch__registers_per_thread",
+    "sm__inst_executed.sum",
+    "sm__inst_executed_pipe_fp32.avg.pct_of_peak_sustained_active",
+    "sm__inst_executed_pipe_tensor.avg.pct_of_peak_sustained_active",
+    "dram__bytes_read.sum",
+    "dram__bytes_write.sum",
+    "dram__throughput.avg.pct_of_peak_sustained_elapsed",
+    "dram__bytes.sum.per_second",
+    "gpu__dram_throughput.avg.pct_of_peak_sustained_elapsed",
+    "l1tex__t_sector_hit_rate.pct",
+    "l1tex__throughput.avg.pct_of_peak_sustained_active",
+    "lts__t_sector_hit_rate.pct",
+    "lts__throughput.avg.pct_of_peak_sustained_active",
+    "smsp__warp_issue_stalled_memory_dependency_per_warp_active.pct",
+    "smsp__warp_issue_stalled_short_scoreboard_per_warp_active.pct",
+    "smsp__warp_issue_stalled_long_scoreboard_per_warp_active.pct",
+    "smsp__warp_issue_stalled_barrier_per_warp_active.pct",
+    "smsp__warp_issue_stalled_branch_resolving_per_warp_active.pct",
+    "smsp__sass_average_branch_targets_threads_uniform.pct"
+]
+
 def get_ncu_kernel_metrics(ref_arch_src: str,
                            kernel_src: str,
                            build_dir: str,
                            gpu_id: int,
                            num_trials: int = 100,
-                           metrics: list[str] | str = "all",
+                           metrics: list[str] = top24_metrics_cuda_forge,
                            seed_num: int = 42) -> str:
     """
     Profile a single-kernel run using Nsight Compute (ncu) and capture
@@ -241,19 +269,19 @@ def get_ncu_kernel_metrics(ref_arch_src: str,
     launcher = os.path.join("_launch_ncu.py")
 
     # prepare the metric list argument
-    metrics_arg = ",".join(metrics) if isinstance(metrics, (list, tuple)) else metrics
+    metrics_arg = ",".join(metrics)
 
     cmd = [
         "ncu",
         "--target-processes", "all",
         "--print-summary", "per-kernel",
         "--metrics", metrics_arg,
-        "--set", "full",
+        # "--set", "full", -- TODO test both with and without this
         "--launch-skip", "2",
         "--launch-count", str(num_trials),
         "python", launcher,
         ref_arch_src, kernel_src, build_dir,
-        str(gpu_id), str(seed_num),
+        str(gpu_id), str(seed_num), str(num_trials),
     ]
 
     # capture ncu output

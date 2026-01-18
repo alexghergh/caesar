@@ -59,6 +59,13 @@ class CaesarRunConfig(Config):
         self.log_dir_prefix = "/home/8/uc05358/kernel-eval/caesar_log_dir/"
         self.build_dir_prefix = "/home/8/uc05358/kernel-eval/caesar_build_dir/"
 
+        # rag
+        self.rag_docs_dir = "./rag_docs"
+        self.rag_index_dir = "./rag_index"
+        self.rag_manifest_path = "./rag_index/manifest.json"
+        self.rag_top_k = 4
+        self.rag_scope = "global"  # or "problem"
+
         # output verbosity
         self.verbose = False
         self.show_state = False
@@ -89,3 +96,4 @@ class CaesarRunConfig(Config):
 
     def __repr__(self):
         return f"CaesarConfig({self.to_dict()})"
+

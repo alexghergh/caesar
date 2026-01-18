@@ -43,6 +43,7 @@ from utils import (
 from orchestrator import GPUOrchestrator
 from caesar_config import CaesarRunConfig
 from conversation_info import ConversationInfo
+from rag import RagIndex, build_or_load_rag_index, rag_retrieve
 
 
 # context that doesn't change during state machine traversal
@@ -56,10 +57,10 @@ class CaesarRuntimeContext:
     build_dir: str | os.PathLike
     orchestrator: GPUOrchestrator
     worker_semaphore: mp.Semaphore
-    code_llm: CompiledStateGraph
-    prompt_llm: CompiledStateGraph
+    code_agent: CompiledStateGraph
+    prompt_agent: CompiledStateGraph
     reviewer_agent: CompiledStateGraph
-
+    rag_index: RagIndex
 
 
 # graph state that is updated when iterating between the state machine rounds
@@ -129,7 +130,7 @@ def setup_state_machine_handler(
             # if these are empty, this turn was corrupted somehow
             # re-do this turn
             if (
-                conversation_info.input_prompt[turn] == ""
+                conversation_info.formatted_prompt[turn] == ""
                 or conversation_info.model_response[turn] == ""
                 or conversation_info.kernel_code[turn] == ""
             ):
@@ -168,7 +169,7 @@ def create_prompt_handler(
     Create the prompt for the model.
     """
     config = runtime.context.config
-    prompt_llm = runtime.context.prompt_llm
+    prompt_agent = runtime.context.prompt_agent
     work = runtime.context.work
     ref_problem_src = runtime.context.ref_problem_src
     conv_info = state['conversation_info']
@@ -181,11 +182,13 @@ def create_prompt_handler(
         )
 
     # initialize this round's prompt with the information so far
-    conv_info.input_prompt[current_turn] = build_llm_prompt(
+    conv_info.formatted_prompt[current_turn] = build_llm_prompt(
         config=config,
-        prompt_llm=prompt_llm,
+        prompt_agent=prompt_agent,
         turn=current_turn,
+        problem_id=work.problem_id,
         ref_arch_src=ref_problem_src,
+        rag_index=runtime.context.rag_index,
         conv_info=conv_info,
     )
 
@@ -201,7 +204,7 @@ def query_llm_handler(
     """
     config = runtime.context.config
     work = runtime.context.work
-    code_llm = runtime.context.code_llm
+    code_agent = runtime.context.code_agent
     current_turn = state['current_turn']
     conv_info = state['conversation_info']
 
@@ -212,10 +215,10 @@ def query_llm_handler(
         )
 
     # query LLM coding agent
-    response = code_llm.invoke({
+    response = code_agent.invoke({
         "messages": [{
             "role": "user",
-            "content": conv_info.input_prompt[current_turn],
+            "content": conv_info.formatted_prompt[current_turn],
         }]
     })
 
@@ -417,6 +420,16 @@ def correctness_check_handler(
 
             # if compiled and is correct
             if result is not None and result.compiled and result.correctness:
+                runtime_ms = result.runtime if result.runtime is not None else -1
+                runtime.context.rag_index.insert_kernel(
+                    conv_info.kernel_code[current_turn],
+                    {
+                        "problem_id": work.problem_id,
+                        "turn": current_turn,
+                        "runtime_ms": runtime_ms,
+                    },
+                )
+
                 state['state_outcome'] = StateOutcome.CorrectnessSuccess
             else:
                 # summarize the correctness error to aid in the next round
@@ -701,19 +714,36 @@ def init_and_run_graph(
 
         ref_problem_src = read_file(work.problem_path)
 
+        # build the rag index
+        rag_index = build_or_load_rag_index(
+            docs_dir=config.rag_docs_dir,
+            index_dir=config.rag_index_dir,
+            manifest_path=config.rag_manifest_path,
+        )
+
         # build the code agent system prompt (includes examples + ref kernel)
         code_agent_system_prompt = build_code_agent_system_prompt(
             config=config,
             ref_arch_src=ref_problem_src,
         )
 
-        # llms
-        code_llm = create_code_agent(
+        # build agents
+        code_agent = create_code_agent(
             **base_llm_opts,
             system_prompt=code_agent_system_prompt,
         )
-        prompt_llm = create_prompt_agent(**base_llm_opts)
         reviewer_agent = create_reviewer_agent(**base_llm_opts)
+        prompt_agent = create_prompt_agent(
+            **base_llm_opts,
+            tools=[rag_retrieve],
+        )
+
+        # save the initial system prompts
+        conv_info = ConversationInfo(
+            coding_agent_system_prompt=code_agent_system_prompt,
+            prompt_agent_system_prompt=PROMPT_AGENT_SYSTEM_PROMPT,
+            reviewer_agent_system_prompt=REVIEWER_AGENT_SYSTEM_PROMPT,
+        )
 
         # build graph
         graph = _init_state_machine_graph()
@@ -744,17 +774,11 @@ def init_and_run_graph(
             ),
             'orchestrator': orchestrator,
             'worker_semaphore': worker_semaphore,
-            'code_llm': code_llm,
-            'prompt_llm': prompt_llm,
+            'code_agent': code_agent,
+            'prompt_agent': prompt_agent,
             'reviewer_agent': reviewer_agent,
+            'rag_index': rag_index,
         }
-
-        conv_info = ConversationInfo(
-            coding_agent_system_prompt=code_agent_system_prompt,
-            prompt_agent_system_prompt=PROMPT_AGENT_SYSTEM_PROMPT,
-            reviewer_agent_system_prompt=REVIEWER_AGENT_SYSTEM_PROMPT,
-        )
-
         initial_state: CaesarGraphState = {
             'conversation_info': conv_info,
             'current_turn': 1,

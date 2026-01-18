@@ -26,6 +26,11 @@ class ConversationInfo:
     eval_result: dict[int, dict] = field(default_factory=dict)
     profiler_result: dict[int, str] = field(default_factory=dict)
 
+    # rag tracking (prompt agent)
+    rag_query: dict[int, str] = field(default_factory=dict)
+    rag_context: dict[int, str] = field(default_factory=dict)
+    rag_scope: dict[int, str] = field(default_factory=dict)
+
     # reviewer agent stuff
     compile_prompt: dict[int, str] = field(default_factory=dict)
     compile_summary: dict[int, dict] = field(default_factory=dict)
@@ -48,7 +53,6 @@ class ConversationInfo:
             else:
                 ret_val[f.name] = value
 
-
         return ret_val
 
     # helper setter method
@@ -64,5 +68,3 @@ class ConversationInfo:
                 value[turn] = turn_data.get(f.name, f.default_factory())
             else:
                 setattr(self, f.name, turn_data.get(f.name, value))
-
-

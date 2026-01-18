@@ -440,6 +440,9 @@ def create_prompt_agent(
 
     # agent prompt
     system_prompt: str = PROMPT_AGENT_SYSTEM_PROMPT,
+
+    # tools
+    tools: list | None = None,
 ) -> CompiledStateGraph:
     base_model = create_llm(
         temperature=temperature,
@@ -459,7 +462,7 @@ def create_prompt_agent(
     prompt_agent = create_agent(
         model=base_model,
         system_prompt=system_prompt,
-        tools=[],
+        tools=tools or [],
         middleware=[
             SummarizationMiddleware(
                 model=base_model,

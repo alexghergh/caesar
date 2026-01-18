@@ -87,6 +87,10 @@ class CaesarLogger:
         self.current_log[turn]['eval_result'] = llm_info.eval_result.get(turn, '')
         self.current_log[turn]['profiler_result'] = llm_info.profiler_result.get(turn, '')
 
+        self.current_log[turn]['rag_query'] = llm_info.rag_query.get(turn, '')
+        self.current_log[turn]['rag_context'] = llm_info.rag_context.get(turn, '')
+        self.current_log[turn]['rag_scope'] = llm_info.rag_scope.get(turn, '')
+
         self.current_log[turn]['compile_prompt'] = llm_info.compile_prompt.get(turn, '')
         self.current_log[turn]['compile_summary'] = llm_info.compile_summary.get(turn, '')
         self.current_log[turn]['runtime_prompt'] = llm_info.runtime_prompt.get(turn, '')
@@ -105,3 +109,4 @@ class CaesarLogger:
         """
         self.update_turn(turn, llm_info)
         self.save_log()
+

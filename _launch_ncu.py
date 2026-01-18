@@ -5,11 +5,12 @@ from KernelBenchInternal import eval as kernel_eval
 
 
 def main():
-    ref_arch_src, kernel_src, build_dir, gpu_id, seed = sys.argv[1:]
+    ref_arch_src, kernel_src, build_dir, gpu_id, seed, num_trials = sys.argv[1:]
     ref_arch_src = ref_arch_src.replace(r'\n', '\n')
     kernel_src = kernel_src.replace(r'\n', '\n')
     gpu_id = int(gpu_id)
     seed = int(seed)
+    num_trials = int(num_trials)
 
     device = torch.device(f"cuda:{gpu_id}")
     kernel_eval.set_seed(seed)
@@ -36,8 +37,9 @@ def main():
     torch.cuda.synchronize(device=device)
 
     # run kernel
-    _ = model(*inputs)
-    torch.cuda.synchronize(device=device)
+    for i in range(num_trials):
+        _ = model(*inputs)
+        torch.cuda.synchronize(device=device)
 
 
 if __name__ == "__main__":

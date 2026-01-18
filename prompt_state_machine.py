@@ -11,6 +11,7 @@ from langgraph.graph.state import CompiledStateGraph, StateGraph
 
 from caesar_config import CaesarRunConfig
 from conversation_info import ConversationInfo
+from rag import RagIndex
 from prompts import (
     CODE_AGENT_SYSTEM_PROMPT,
     COMPILER_FEEDBACK_PROMPT,
@@ -39,19 +40,30 @@ KERNEL_BENCH_ARCH_EXAMPLES_PATH = os.path.join(
 )
 
 
+# these don't change across prompt setup run
 @dataclass
-class PromptRuntimeContext:
+class BasePromptCreationRuntimeContext:
     config: CaesarRunConfig
-    prompt_llm: CompiledStateGraph
     turn: int
     ref_arch_src: str
     conv_info: ConversationInfo
 
-
+# change across the prompt handler
 class PromptGraphState(TypedDict):
     prompt: str
     best_kernel_idx: int | None
     last_kernel_idx: int | None
+
+
+# separate data, fed to the prompting agent
+@dataclass
+class RefinedPromptContext:
+    rag_index: RagIndex
+    conv_info: ConversationInfo
+    rag_scope: str
+    rag_top_k: int
+    problem_id: int
+    turn: int
 
 
 def build_code_agent_system_prompt(
@@ -81,7 +93,7 @@ def build_code_agent_system_prompt(
 
 
 def initial_prompt_handler(
-    state: PromptGraphState, runtime: Runtime[PromptRuntimeContext]
+    state: PromptGraphState, runtime: Runtime[BasePromptCreationRuntimeContext]
 ) -> PromptGraphState:
     """
     Return an initial message.
@@ -89,9 +101,8 @@ def initial_prompt_handler(
     return { 'prompt': 'Please generate the kernel per the specifications.' }
 
 
-
 def best_and_last_kernel_handler(
-    state: PromptGraphState, runtime: Runtime[PromptRuntimeContext]
+    state: PromptGraphState, runtime: Runtime[BasePromptCreationRuntimeContext]
 ) -> PromptGraphState:
     """
     Append best and last kernels to the prompt.
@@ -138,7 +149,7 @@ def best_and_last_kernel_handler(
 
 
 def feedback_decision(
-    state: PromptGraphState, runtime: Runtime[PromptRuntimeContext]
+    state: PromptGraphState, runtime: Runtime[BasePromptCreationRuntimeContext]
 ) -> Literal[
     'compiler_feedback_handler',
     'correctness_feedback_handler',
@@ -193,7 +204,7 @@ def feedback_decision(
 
 
 def compiler_feedback_handler(
-    state: PromptGraphState, runtime: Runtime[PromptRuntimeContext]
+    state: PromptGraphState, runtime: Runtime[BasePromptCreationRuntimeContext]
 ) -> PromptGraphState:
     eval_result = runtime.context.conv_info.eval_result
     compile_summary = runtime.context.conv_info.compile_summary
@@ -215,7 +226,7 @@ def compiler_feedback_handler(
 
 
 def correctness_feedback_handler(
-    state: PromptGraphState, runtime: Runtime[PromptRuntimeContext]
+    state: PromptGraphState, runtime: Runtime[BasePromptCreationRuntimeContext]
 ) -> PromptGraphState:
     runtime_summary = runtime.context.conv_info.runtime_summary
     prompt = state['prompt']
@@ -229,7 +240,7 @@ def correctness_feedback_handler(
 
 
 def profiler_feedback_handler(
-    state: PromptGraphState, runtime: Runtime[PromptRuntimeContext]
+    state: PromptGraphState, runtime: Runtime[BasePromptCreationRuntimeContext]
 ) -> PromptGraphState:
     eval_result = runtime.context.conv_info.eval_result
     profiler_summary = runtime.context.conv_info.profiler_summary
@@ -274,7 +285,7 @@ def profiler_feedback_handler(
 
 
 def final_prompt_handler(
-    state: PromptGraphState, runtime: Runtime[PromptRuntimeContext]
+    state: PromptGraphState, runtime: Runtime[BasePromptCreationRuntimeContext]
 ) -> PromptGraphState:
     prompt = state['prompt']
     prompt += REFLECTION_INSTRUCTION
@@ -282,7 +293,9 @@ def final_prompt_handler(
 
 
 def _init_prompt_state_machine_graph() -> CompiledStateGraph:
-    builder = StateGraph(PromptGraphState, context_schema=PromptRuntimeContext)
+    builder = StateGraph(
+        PromptGraphState, context_schema=BasePromptCreationRuntimeContext
+    )
 
     # prompt states
     builder.add_node('initial_prompt_handler', initial_prompt_handler)
@@ -312,7 +325,6 @@ def _init_prompt_state_machine_graph() -> CompiledStateGraph:
     builder.add_edge('profiler_feedback_handler', END)
     builder.add_edge('final_prompt_handler', END)
 
-
     graph = builder.compile()
     # print(graph.get_graph().draw_mermaid())
     # graph.get_graph().draw_mermaid_png(output_file_path='prompt_sm_graph.png')
@@ -321,30 +333,29 @@ def _init_prompt_state_machine_graph() -> CompiledStateGraph:
 
 def build_llm_prompt(
     config: CaesarRunConfig,
-    prompt_llm: CompiledStateGraph,
+    prompt_agent: CompiledStateGraph,
     turn: int,
+    problem_id: int,
     ref_arch_src: str,
+    rag_index: RagIndex,
     conv_info: ConversationInfo,
 ) -> str:
 
     # init prompt builder graph
     prompt_graph = _init_prompt_state_machine_graph()
 
-    # build base prompt from feedback + kernels
+    # build the base prompt; this should just contain the necessary information
+    # + human prompt from last turns (e.g. feedback + generated best/last kernels)
     base_prompt = prompt_graph.invoke({
         'prompt': '',
         'best_kernel_idx': None,
         'last_kernel_idx': None,
     }, context={
         'config': config,
-        'prompt_llm': prompt_llm,
         'turn': turn,
         'ref_arch_src': ref_arch_src,
         'conv_info': conv_info,
     })['prompt']
-
-    # build the base prompt; this should just contain the necessary information
-    # + human prompt from last turns
     conv_info.prompt[turn] = base_prompt
 
     if base_prompt.strip() == "":
@@ -352,15 +363,24 @@ def build_llm_prompt(
         return ""
 
     # invoke a prompting agent to refine this prompt
-    response = prompt_llm.invoke({
-        "messages": [
-            {
-                "role": "user",
-                "content": base_prompt,
-            }
-        ]
-    })
-
+    response = prompt_agent.invoke(
+        {
+            "messages": [
+                {
+                    "role": "user",
+                    "content": base_prompt,
+                }
+            ]
+        },
+        context=RefinedPromptContext(
+            rag_index=rag_index,
+            conv_info=conv_info,
+            rag_scope=config.rag_scope,
+            rag_top_k=config.rag_top_k,
+            problem_id=problem_id,
+            turn=turn,
+        ),
+    )
     last_message: AIMessage = response["messages"][-1]
     final_prompt = last_message.content
     conv_info.formatted_prompt[turn] = final_prompt
