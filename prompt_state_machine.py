@@ -3,6 +3,7 @@ from typing import Literal, TypedDict
 from dataclasses import dataclass
 
 from langgraph.graph import END, START
+from langchain_core.messages import AIMessage
 from langgraph.runtime import Runtime
 
 from KernelBenchInternal.utils import read_file
@@ -79,13 +80,13 @@ def build_code_agent_system_prompt(
     )
 
 
-def empty_prompt_handler(
+def initial_prompt_handler(
     state: PromptGraphState, runtime: Runtime[PromptRuntimeContext]
 ) -> PromptGraphState:
     """
-    Return an empty prompt when no prior kernel context exists.
+    Return an initial message.
     """
-    return { 'prompt': '' }
+    return { 'prompt': 'Please generate the kernel per the specifications.' }
 
 
 
@@ -284,7 +285,7 @@ def _init_prompt_state_machine_graph() -> CompiledStateGraph:
     builder = StateGraph(PromptGraphState, context_schema=PromptRuntimeContext)
 
     # prompt states
-    builder.add_node('empty_prompt_handler', empty_prompt_handler)
+    builder.add_node('initial_prompt_handler', initial_prompt_handler)
     builder.add_node('best_and_last_kernel_handler', best_and_last_kernel_handler)
     builder.add_node('compiler_feedback_handler', compiler_feedback_handler)
     builder.add_node('correctness_feedback_handler', correctness_feedback_handler)
@@ -295,18 +296,17 @@ def _init_prompt_state_machine_graph() -> CompiledStateGraph:
     builder.add_conditional_edges(
         START,
         lambda state, runtime:
-            'empty_prompt_handler'
+            'initial_prompt_handler'
             if (
                 runtime.context.turn == 1
                 or runtime.context.conv_info.kernel_code is None
                 or all(not v for v in runtime.context.conv_info.kernel_code.values())
             ) else
             'best_and_last_kernel_handler',
-        ['empty_prompt_handler', 'best_and_last_kernel_handler']
+        ['initial_prompt_handler', 'best_and_last_kernel_handler']
     )
-    builder.add_conditional_edges('best_and_last_kernel_handler',
-                                  feedback_decision)
-    builder.add_edge('empty_prompt_handler', END)
+    builder.add_conditional_edges('best_and_last_kernel_handler', feedback_decision)
+    builder.add_edge('initial_prompt_handler', END)
     builder.add_edge('compiler_feedback_handler', END)
     builder.add_edge('correctness_feedback_handler', END)
     builder.add_edge('profiler_feedback_handler', END)
@@ -330,8 +330,8 @@ def build_llm_prompt(
     # init prompt builder graph
     prompt_graph = _init_prompt_state_machine_graph()
 
-    # run
-    prompt = prompt_graph.invoke({
+    # build base prompt from feedback + kernels
+    base_prompt = prompt_graph.invoke({
         'prompt': '',
         'best_kernel_idx': None,
         'last_kernel_idx': None,
@@ -343,4 +343,26 @@ def build_llm_prompt(
         'conv_info': conv_info,
     })['prompt']
 
-    return prompt
+    # build the base prompt; this should just contain the necessary information
+    # + human prompt from last turns
+    conv_info.prompt[turn] = base_prompt
+
+    if base_prompt.strip() == "":
+        conv_info.formatted_prompt[turn] = ""
+        return ""
+
+    # invoke a prompting agent to refine this prompt
+    response = prompt_llm.invoke({
+        "messages": [
+            {
+                "role": "user",
+                "content": base_prompt,
+            }
+        ]
+    })
+
+    last_message: AIMessage = response["messages"][-1]
+    final_prompt = last_message.content
+    conv_info.formatted_prompt[turn] = final_prompt
+
+    return final_prompt

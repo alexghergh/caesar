@@ -10,10 +10,8 @@ from langchain.agents.middleware import SummarizationMiddleware
 from langchain_openai import ChatOpenAI
 from langchain_anthropic import ChatAnthropic
 from langchain_google_genai import ChatGoogleGenerativeAI
-from prompts import REVIEWER_AGENT_SYSTEM_PROMPT
 
-
-
+from prompts import REVIEWER_AGENT_SYSTEM_PROMPT, PROMPT_AGENT_SYSTEM_PROMPT
 
 
 def exec_log_to_obj(saved_dict: dict) -> KernelExecResult:
@@ -391,9 +389,8 @@ def create_code_agent(
     reasoning_effort: str = 'medium', # for gpt-5
 
     # agent prompt
-    system_prompt: str,
+    system_prompt: str = '',
 ) -> CompiledStateGraph:
-
     base_model = create_llm(
         temperature=temperature,
         top_p=top_p,
@@ -425,7 +422,58 @@ def create_code_agent(
     return code_agent
 
 
+def create_prompt_agent(
+    temperature: float = 0.0,
+    top_p: float = 1.0, # nucleus sampling
+    top_k: int = 50,
+    num_completions: int = 1, # beam search
+    max_tokens: int = 128, # max output tokens to generate
+    server_type: str = "sglang",
+    server_address: str = "localhost",
+    server_port: int = 30000, # only for local server hosted on SGLang
+    model_name: str = "default", # specify model type
+
+    # reasoning models
+    use_reasoning_model: bool = True, # whether to use reasoning version
+    budget_tokens: int = 0, # for claude thinking
+    reasoning_effort: str = 'medium', # for gpt-5
+
+    # agent prompt
+    system_prompt: str = PROMPT_AGENT_SYSTEM_PROMPT,
+) -> CompiledStateGraph:
+    base_model = create_llm(
+        temperature=temperature,
+        top_p=top_p,
+        top_k=top_k,
+        num_completions=num_completions,
+        max_tokens=max_tokens,
+        server_type=server_type,
+        server_address=server_address,
+        server_port=server_port,
+        model_name=model_name,
+        use_reasoning_model=use_reasoning_model,
+        budget_tokens=budget_tokens,
+        reasoning_effort=reasoning_effort,
+    )
+
+    prompt_agent = create_agent(
+        model=base_model,
+        system_prompt=system_prompt,
+        tools=[],
+        middleware=[
+            SummarizationMiddleware(
+                model=base_model,
+                trigger=('tokens', int(max_tokens * 0.8)),
+                keep=('messages', 20),
+            )
+        ],
+    )
+
+    return prompt_agent
+
+
 def create_reviewer_agent(
+
     temperature: float = 0.0,
     top_p: float = 1.0, # nucleus sampling
     top_k: int = 50,

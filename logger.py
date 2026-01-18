@@ -71,17 +71,22 @@ class CaesarLogger:
         self.current_log['system_prompts']['coding_agent_system_prompt'] = (
             llm_info.coding_agent_system_prompt
         )
+        self.current_log['system_prompts']['prompt_agent_system_prompt'] = (
+            llm_info.prompt_agent_system_prompt
+        )
         self.current_log['system_prompts']['reviewer_agent_system_prompt'] = (
             llm_info.reviewer_agent_system_prompt
         )
 
+        self.current_log[turn]['prompt'] = llm_info.prompt.get(turn, '')
+        self.current_log[turn]['formatted_prompt'] = llm_info.formatted_prompt.get(turn, '')
 
-        self.current_log[turn]['input_prompt'] = llm_info.input_prompt.get(turn, '')
         self.current_log[turn]['model_response'] = llm_info.model_response.get(turn, '')
         self.current_log[turn]['kernel_code'] = llm_info.kernel_code.get(turn, '')
         self.current_log[turn]['token_usage'] = llm_info.token_usage.get(turn, '')
         self.current_log[turn]['eval_result'] = llm_info.eval_result.get(turn, '')
         self.current_log[turn]['profiler_result'] = llm_info.profiler_result.get(turn, '')
+
         self.current_log[turn]['compile_prompt'] = llm_info.compile_prompt.get(turn, '')
         self.current_log[turn]['compile_summary'] = llm_info.compile_summary.get(turn, '')
         self.current_log[turn]['runtime_prompt'] = llm_info.runtime_prompt.get(turn, '')

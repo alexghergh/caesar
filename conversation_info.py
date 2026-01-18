@@ -10,16 +10,23 @@ class ConversationInfo:
 
     # agents system prompts
     coding_agent_system_prompt: str = field(default_factory=str)
+    prompt_agent_system_prompt: str = field(default_factory=str)
     reviewer_agent_system_prompt: str = field(default_factory=str)
 
+    ## per turn info
 
-    # per turn info
-    input_prompt: dict[int, str] = field(default_factory=dict)
+    # prompt agent
+    prompt: dict[int, str] = field(default_factory=dict)
+    formatted_prompt: dict[int, str] = field(default_factory=dict)
+
+    # code agent
     model_response: dict[int, str] = field(default_factory=dict)
     kernel_code: dict[int, str] = field(default_factory=dict)
     token_usage: dict[int, dict] = field(default_factory=dict)
     eval_result: dict[int, dict] = field(default_factory=dict)
     profiler_result: dict[int, str] = field(default_factory=dict)
+
+    # reviewer agent stuff
     compile_prompt: dict[int, str] = field(default_factory=dict)
     compile_summary: dict[int, dict] = field(default_factory=dict)
     runtime_prompt: dict[int, str] = field(default_factory=dict)

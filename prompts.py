@@ -75,6 +75,19 @@ Hard requirements:
 - Preserve the original model I/O semantics and correctness.
 """
 
+PROMPT_AGENT_SYSTEM_PROMPT = """You are a prompt-modifying agent for a CUDA kernel coding agent.
+
+Your task:
+- Rewrite the provided context into a concise, actionable prompt for the coding agent.
+- Incorporate reviewer feedback, best/last kernels, and any performance/correctness issues.
+- Preserve all factual details and constraints from the input; do not invent new information.
+
+Rules:
+- Output ONLY the revised prompt text.
+- Do NOT include code blocks unless they are already present in the input and are necessary.
+- Keep the prompt focused on concrete next steps for improving the kernel.
+"""
+
 REVIEWER_AGENT_SYSTEM_PROMPT = """You are a CUDA kernel reviewer and adversarial critic for a code generation agent.
 
 Mission:
@@ -127,4 +140,5 @@ Profiler trace:
 
 {profiler_output}
 """
+
 

@@ -7,17 +7,16 @@ from pathlib import Path
 from dataclasses import dataclass
 from typing import TypedDict
 
-from langchain_core.messages import AIMessage
-
 from KernelBenchInternal import eval as kernel_eval
 from KernelBenchInternal.utils import (
     extract_last_code,
     read_file,
 )
+from langsmith import trace
+from langchain_core.messages import AIMessage
 from langgraph.graph import StateGraph, START, END
 from langgraph.graph.state import CompiledStateGraph
 from langgraph.runtime import Runtime
-from langsmith import trace
 
 from eval import (
     compile_single_sample,
@@ -25,21 +24,22 @@ from eval import (
     get_ncu_kernel_metrics_mp,
 
 )
-
 from prompt_state_machine import build_llm_prompt, build_code_agent_system_prompt
-from prompts import REVIEWER_AGENT_SYSTEM_PROMPT
+from prompts import REVIEWER_AGENT_SYSTEM_PROMPT, PROMPT_AGENT_SYSTEM_PROMPT
 from prompts import (
     COMPILE_SUMMARY_USER_INPUT,
     RUNTIME_SUMMARY_USER_INPUT,
     PROFILER_SUMMARY_USER_INPUT,
 )
-
 from states import StateOutcome
 from work import WorkArgs
 from logger import CaesarLogger
-from utils import ensure_json_serializable, create_llm, create_code_agent, create_reviewer_agent
-
-
+from utils import (
+    ensure_json_serializable,
+    create_code_agent,
+    create_prompt_agent,
+    create_reviewer_agent,
+)
 from orchestrator import GPUOrchestrator
 from caesar_config import CaesarRunConfig
 from conversation_info import ConversationInfo
@@ -712,7 +712,7 @@ def init_and_run_graph(
             **base_llm_opts,
             system_prompt=code_agent_system_prompt,
         )
-        prompt_llm = create_llm(**base_llm_opts)
+        prompt_llm = create_prompt_agent(**base_llm_opts)
         reviewer_agent = create_reviewer_agent(**base_llm_opts)
 
         # build graph
@@ -751,6 +751,7 @@ def init_and_run_graph(
 
         conv_info = ConversationInfo(
             coding_agent_system_prompt=code_agent_system_prompt,
+            prompt_agent_system_prompt=PROMPT_AGENT_SYSTEM_PROMPT,
             reviewer_agent_system_prompt=REVIEWER_AGENT_SYSTEM_PROMPT,
         )
 
