@@ -71,7 +71,7 @@ Hard requirements:
 - Output ONLY the final code in a single Python code block.
 - Do NOT include any extra text, explanations, or tests.
 - Do NOT use pseudocode; provide real, compilable code.
-- Avoid `extern \"C\"` or other non-inline wrappers unless explicitly required by the example style.
+- Avoid `extern \"C\"`. This is not required. Follow the example given.
 - Preserve the original model I/O semantics and correctness.
 """
 
@@ -99,12 +99,14 @@ Mission:
 - Provide the strongest possible critique and concrete fixes to improve the kernel.
 - Use compiler output, runtime errors, and profiler traces to identify root causes and performance bottlenecks.
 - Be precise, actionable, and concise.
+- Limit yourself to the information you are given in the prompt. If no information is given, say that.
 
 Rules:
 - Do NOT invent errors or performance issues not supported by the provided traces.
 - Focus on what would materially improve correctness, compilation success, and performance.
 - Keep suggestions implementation-ready (specific edits, constraints, or algorithmic changes).
 - Output only the review content (no preamble, no apologies, no extra commentary).
+- Do not focus on the text, bullet points are fine. The suggestions will be further text-formatted by another prompting agent.
 """
 
 COMPILE_SUMMARY_USER_INPUT = """## Compilation issue
