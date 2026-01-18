@@ -221,9 +221,8 @@ def query_llm_handler(
             "content": conv_info.formatted_prompt[current_turn],
         }]
     })
-
     last_message: AIMessage = response["messages"][-1]
-    model_content = last_message.content
+    model_content = last_message.text
     usage_metadata = last_message.usage_metadata
 
     conv_info.model_response[current_turn] = model_content
@@ -311,7 +310,7 @@ def compile_handler(
         })
 
         last_message: AIMessage = reviewer_response["messages"][-1]
-        reviewer_content = last_message.content
+        reviewer_content = last_message.text
         reviewer_usage = last_message.usage_metadata
 
         conv_info.compile_summary[current_turn] = {
@@ -445,9 +444,8 @@ def correctness_check_handler(
                         }
                     ]
                 })
-
                 last_message: AIMessage = reviewer_response["messages"][-1]
-                reviewer_content = last_message.content
+                reviewer_content = last_message.text
                 reviewer_usage = last_message.usage_metadata
 
                 conv_info.runtime_summary[current_turn] = {
@@ -535,7 +533,7 @@ def performance_handler(
         })
 
         last_message: AIMessage = reviewer_response["messages"][-1]
-        reviewer_content = last_message.content
+        reviewer_content = last_message.text
         reviewer_usage = last_message.usage_metadata
 
         conv_info.profiler_summary[current_turn] = {
