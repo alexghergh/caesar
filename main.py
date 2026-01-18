@@ -18,8 +18,8 @@ from KernelBenchInternal.dataset import (
     KERNELBENCH_LEVEL_3_SUBSET_DATASET,
     KERNELBENCH_LEVEL_3_RANDOM_SUBSET_DATASET,
     KERNELBENCH_LEVELS_12_REPRESENTATIVE_DATASET,
+    CUDAFORGE_SUBSET,
 )
-
 
 from state_machine import run_state_machine
 from work import WorkArgs
@@ -43,6 +43,8 @@ dataset_name_to_dataset = {
     "KernelBench/level3-random": KERNELBENCH_LEVEL_3_RANDOM_SUBSET_DATASET,
 
     "KernelBench/levels12-subset": KERNELBENCH_LEVELS_12_REPRESENTATIVE_DATASET,
+
+    "KernelBench/cudaforge-subset": CUDAFORGE_SUBSET,
 
     # debug
     "KernelBench/level1-test": [
