@@ -22,7 +22,7 @@ from eval import (
     compile_single_sample,
     evaluate_single_sample_src_mp,
     get_ncu_kernel_metrics_mp,
-
+    top24_metrics_cuda_forge,
 )
 from prompt_state_machine import build_llm_prompt, build_code_agent_system_prompt
 from prompts import REVIEWER_AGENT_SYSTEM_PROMPT, PROMPT_AGENT_SYSTEM_PROMPT
@@ -517,7 +517,7 @@ def performance_handler(
                 conv_info.kernel_code[current_turn],
                 runtime.context.build_dir,
                 gpu_id,
-                "all",
+                top24_metrics_cuda_forge,
                 result_queue,
             ),
         )
