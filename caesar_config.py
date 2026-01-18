@@ -56,8 +56,8 @@ class CaesarRunConfig(Config):
         self.timeout = 600 # time out per round, set to 10 min
 
         # logging
-        self.log_dir_prefix = "/home/8/uc05358/kernel-eval/caesar_log_dir/"
-        self.build_dir_prefix = "/home/8/uc05358/kernel-eval/caesar_build_dir/"
+        self.log_dir_prefix = "./caesar_log_dir/"
+        self.build_dir_prefix = "./caesar_build_dir/"
 
         # rag
         self.rag_docs_dir = "./rag_docs"

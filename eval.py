@@ -266,7 +266,7 @@ def get_ncu_kernel_metrics(ref_arch_src: str,
 
     # tiny launcher that builds inputs, loads the model and runs the kernel
     # num_trials times
-    launcher = os.path.join("_launch_ncu.py")
+    launcher = os.path.abspath(os.path.join(os.path.dirname(__file__), "_launch_ncu.py"))
 
     # prepare the metric list argument
     metrics_arg = ",".join(metrics)

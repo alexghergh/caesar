@@ -12,7 +12,6 @@ from langchain_core.documents import Document
 from langchain.tools import tool, ToolRuntime
 
 
-
 @dataclass
 class RagIndex:
     vectorstore: FAISS
