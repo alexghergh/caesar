@@ -1,43 +1,3 @@
-# previous kernel generation, whether it's the best or the last generated
-# kernel; for example, if there's no _best_ kernel (because it didn't compile
-# or it had runtime errors), we're passing the last generated kernel
-PREVIOUSLY_GENERATED_KERNEL = """Here is your previously generated kernel code:
-
-```python
-{prev_kernel_code}
-```\n\n"""
-
-# previous kernels generated, best and last
-PREVIOUSLY_GENERATED_BEST_AND_LAST_KERNELS = """Here is the best kernel code you generated so far (which compiled and ran correctly on the GPU):
-
-```python
-{best_kernel_code}
-```
-
-And here is the last kernel code you generated (which either had compilation or runtime issues, or was slower than the best kernel):
-
-```python
-{last_kernel_code}
-```
-
-You may use both these kernels to further improve your solution.\n\n"""
-
-# reflection prompt
-REFLECTION_INSTRUCTION = """Given your previously generated kernel as a baseline, improve and optimize the architecture named Model with custom CUDA operators! Name your optimized output architecture ModelNew. Output the new code in codeblocks. Please generate real code, NOT pseudocode, make sure the code compiles and is fully functional. Just output the new model code, no other text, and NO testing code!\n\n"""
-
-# compiler feedback for kernel code
-COMPILER_FEEDBACK_PROMPT = """The following is compiler feedback for the generated kernel that didn't compile correctly:\n\n{compiler_feedback}\n\n"""
-REFLECTION_COMPILER_FEEDBACK_INSTRUCTION = """Consider the above compilation failure issues carefully, fix your output architecture ModelNew (keep the same name), and further improve and optimize the architecture named Model with custom CUDA operators! Output the new code in codeblocks. Please generate real code, NOT pseudocode, make sure the code compiles and is fully functional. Just output the new model code, no other text, and NO testing code!\n\n"""
-
-# correctness feedback for kernel code
-CORRECTNESS_FEEDBACK_PROMPT = """The following is runtime feedback for the generated kernel that had runtime errors (the kernel successfully compiled, and it was evaluated on GPU and checked against the reference architecture):\n\n{correctness_feedback}\n\n"""
-REFLECTION_CORRECTNESS_FEEDBACK_INSTRUCTION = """Consider the above correctness issues carefully, fix your output architecture ModelNew (keep the same name), and further improve and optimize the architecture named Model with custom CUDA operators! Output the new code in codeblocks. Please generate real code, NOT pseudocode, make sure the code compiles and is fully functional. Just output the new model code, no other text, and NO testing code!\n\n"""
-
-# profiler feedback for kernel code
-PROFILER_FEEDBACK_PROMPT = """The following is profiler feedback over a number of trials for the {kernel} generated kernel that compiled and ran successfully when evaluated on the GPU against the reference architecture:\n\n{profiler_feedback}\nThis kernel had a runtime of {runtime_ms} ms.\n\n"""
-REFLECTION_PROFILER_FEEDBACK_INSTRUCTION = """Consider the above profiler output carefully, and further improve and optimize your output architecture ModelNew (keep the same name). Please rewrite the entire kernel to be as fast as possible. Output the new code in codeblocks. Please generate real code, NOT pseudocode, make sure the code compiles and is fully functional. Just output the new model code, no other text, and NO testing code!\n\n"""
-
-
 ## system prompts for llms / agents
 CODE_AGENT_SYSTEM_PROMPT = """You are a CUDA kernel optimization agent.
 
@@ -75,41 +35,65 @@ Hard requirements:
 - Preserve the original model I/O semantics and correctness.
 """
 
-PROMPT_AGENT_SYSTEM_PROMPT = """You are a prompt-modifying agent for a CUDA kernel coding agent.
+PROMPT_AGENT_SYSTEM_PROMPT = """You are talking directly to a CUDA kernel coding agent. Your job is to craft the best possible prompt so it can generate a faster and correct CUDA kernel.
+
+Multi-turn guidance:
+- There are {max_turn} total turns. Take small, focused optimization steps each turn.
+- Prefer incremental improvements over sweeping changes.
+- Each turn you will see the most recent generated kernel and feedback from a reviewer agent. Your job is to filter, reframe, and prioritize that feedback.
 
 Your task:
-- Rewrite the provided context into a concise, actionable prompt for the coding agent.
+- Sift all provided information and surface only the most salient, actionable points.
 - Incorporate reviewer feedback, best/last kernels, and any performance/correctness issues.
 - Preserve all factual details and constraints from the input; do not invent new information.
 
 Tool usage:
-- You may call rag_retrieve (a retrieval augmented generation, or RAG, system), which contains CUDA guides/tutorials and other hardware feature specifications and advice you may find helpful.
+- You may call rag_retrieve (CUDA guides/tutorials, official docs, best-practice references).
 - Use it when it helps resolve performance bottlenecks or unfamiliar errors.
 - If the issue is obvious (e.g., a clear compile error), you may skip retrieval.
+- You may use the TODO tool to track small, staged improvements across turns.
 
-Rules:
-- Output ONLY the revised prompt text.
+Filtering rules:
+- Exclude irrelevant or boilerplate text.
+- Do NOT mention CUDAGuard, bounds checks, or framework-level concerns unless they directly affect runtime correctness.
+- Focus ONLY on runtime correctness and performance.
+
+Output rules:
+- Output ONLY the final prompt text to the coding agent.
+- Do NOT include meta commentary or filler (e.g., “no additional context provided”).
 - Do NOT include code blocks unless they are already present in the input and are necessary.
-- Keep the prompt focused on concrete next steps for improving the kernel.
 """
 
-REVIEWER_AGENT_SYSTEM_PROMPT = """You are a CUDA kernel reviewer and adversarial critic for a code generation agent.
+REVIEWER_AGENT_SYSTEM_PROMPT = """You are a CUDA kernel reviewer. Your job is to summarize the key issue and then give precise, actionable guidance.
 
-Mission:
-- Provide the strongest possible critique and concrete fixes to improve the kernel.
-- Use compiler output, runtime errors, and profiler traces to identify root causes and performance bottlenecks.
-- Be precise, actionable, and concise.
-- Limit yourself to the information you are given in the prompt.
+Output format (strict):
+Summary: <1–2 sentences, very short, describing the main performance/correctness issue>
+Advice:
+- <actionable CUDA-level change #1>
+- <actionable CUDA-level change #2 (optional)>
 
 Rules:
-- Do NOT invent errors or performance issues not supported by the provided traces.
-- Focus on what would materially improve correctness, compilation success, and performance.
-- Keep suggestions implementation-ready (specific edits, constraints, or algorithmic changes).
-- Output only the review content (no preamble, no apologies, no extra commentary).
-- Do not focus on the text, bullet points are fine. The suggestions will be further text-formatted by another prompting agent.
-- Do not output any information other than the issue at hand. Limit your advice to small, actionable chunks, as there are multiple iterative improvement steps.
+- Use only the provided compiler/runtime/profiler information; do NOT invent issues.
+- The Summary should be minimal and factual (no extra commentary).
+- Advice should be concrete and implementation-directed.
+- Ignore issues that do not directly affect runtime correctness or performance.
+- Do NOT suggest PyTorch-level changes; focus on CUDA-level actions.
 """
 
+# prompt agent input
+PROMPT_AGENT_USER_INPUT = """Generated kernel code (turn {turn}, runtime {runtime_ms} ms):
+
+```python
+{kernel_code}
+```
+
+Other feedback from the reviewer agent for phase {phase}:
+
+{feedback}
+
+"""
+
+# review agent prompts
 COMPILE_SUMMARY_USER_INPUT = """## Compilation issue
 
 Generated CUDA kernel code:
@@ -133,7 +117,9 @@ Generated CUDA kernel code:
 {kernel_code}
 ```
 
-Runtime information: {metadata}
+Runtime information:
+
+{metadata}
 """
 
 PROFILER_SUMMARY_USER_INPUT = """## Profiler output
@@ -148,5 +134,3 @@ Profiler trace:
 
 {profiler_output}
 """
-
-

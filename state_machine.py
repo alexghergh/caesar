@@ -60,6 +60,8 @@ class CaesarRuntimeContext:
     code_agent: CompiledStateGraph
     prompt_agent: CompiledStateGraph
     reviewer_agent: CompiledStateGraph
+    code_thread_id: str
+    prompt_thread_id: str
     rag_index: RagIndex
 
 
@@ -171,7 +173,6 @@ def create_prompt_handler(
     config = runtime.context.config
     prompt_agent = runtime.context.prompt_agent
     work = runtime.context.work
-    ref_problem_src = runtime.context.ref_problem_src
     conv_info = state['conversation_info']
     current_turn = state['current_turn']
 
@@ -187,7 +188,7 @@ def create_prompt_handler(
         prompt_agent=prompt_agent,
         turn=current_turn,
         problem_id=work.problem_id,
-        ref_arch_src=ref_problem_src,
+        thread_id=runtime.context.prompt_thread_id,
         rag_index=runtime.context.rag_index,
         conv_info=conv_info,
     )
@@ -215,12 +216,19 @@ def query_llm_handler(
         )
 
     # query LLM coding agent
-    response = code_agent.invoke({
-        "messages": [{
-            "role": "user",
-            "content": conv_info.formatted_prompt[current_turn],
-        }]
-    })
+    response = code_agent.invoke(
+        {
+            "messages": [{
+                "role": "user",
+                "content": conv_info.formatted_prompt[current_turn],
+            }]
+        },
+        config={
+            "configurable": {
+                "thread_id": runtime.context.code_thread_id,
+            }
+        }
+    )
     last_message: AIMessage = response["messages"][-1]
     model_content = last_message.text
     usage_metadata = last_message.usage_metadata
@@ -518,7 +526,7 @@ def performance_handler(
         conv_info.profiler_result[current_turn] = result
 
         # summarize the profiler output
-        prof_prompt =  PROFILER_SUMMARY_USER_INPUT.format(
+        prof_prompt = PROFILER_SUMMARY_USER_INPUT.format(
             kernel_code=conv_info.kernel_code[current_turn],
             profiler_output=result,
         )
@@ -531,7 +539,6 @@ def performance_handler(
                 }
             ]
         })
-
         last_message: AIMessage = reviewer_response["messages"][-1]
         reviewer_content = last_message.text
         reviewer_usage = last_message.usage_metadata
@@ -646,11 +653,14 @@ def _init_state_machine_graph() -> CompiledStateGraph:
     )
     builder.add_conditional_edges(
         'correctness_check_handler',
-        lambda state: state['state_outcome'],
-        {
-            StateOutcome.CorrectnessSuccess: 'performance_handler',
-            StateOutcome.CorrectnessFail: 'finish_turn_handler'
-        }
+        lambda state, runtime:
+            'performance_handler'
+            if (
+                state['state_outcome'] == StateOutcome.CorrectnessSuccess
+                and state['current_turn'] < runtime.context.config.max_turn
+            ) else
+            'finish_turn_handler',
+        ['performance_handler', 'finish_turn_handler']
     )
     builder.add_edge('performance_handler', 'finish_turn_handler')
     builder.add_conditional_edges(
@@ -722,17 +732,25 @@ def init_and_run_graph(
             system_prompt=code_agent_system_prompt,
         )
         reviewer_agent = create_reviewer_agent(**base_llm_opts)
+        prompt_agent_system_prompt = PROMPT_AGENT_SYSTEM_PROMPT.format(
+            max_turn=config.max_turn,
+        )
         prompt_agent = create_prompt_agent(
             **base_llm_opts,
+            system_prompt=prompt_agent_system_prompt,
             tools=[rag_retrieve],
         )
 
         # save the initial system prompts
         conv_info = ConversationInfo(
             coding_agent_system_prompt=code_agent_system_prompt,
-            prompt_agent_system_prompt=PROMPT_AGENT_SYSTEM_PROMPT,
+            prompt_agent_system_prompt=prompt_agent_system_prompt,
             reviewer_agent_system_prompt=REVIEWER_AGENT_SYSTEM_PROMPT,
         )
+
+        thread_id_base = f"{work.problem_id}-{work.sample_id}-{process_id}"
+        code_thread_id = f"code-{thread_id_base}"
+        prompt_thread_id = f"prompt-{thread_id_base}"
 
         # build graph
         graph = _init_state_machine_graph()
@@ -766,8 +784,11 @@ def init_and_run_graph(
             'code_agent': code_agent,
             'prompt_agent': prompt_agent,
             'reviewer_agent': reviewer_agent,
+            'code_thread_id': code_thread_id,
+            'prompt_thread_id': prompt_thread_id,
             'rag_index': rag_index,
         }
+
         initial_state: CaesarGraphState = {
             'conversation_info': conv_info,
             'current_turn': 1,

@@ -91,13 +91,21 @@ def build_or_load_rag_index(
                     manifest_path=manifest_path)
 
 
-@tool("rag_retrieve")
-def rag_retrieve(query: str,
-                 runtime: ToolRuntime = None # ToolRuntime[RefinedPromptContext]
-                 ) -> str:
-    """
-    Retrieve relevant references.
-    """
+@tool(
+    "rag_retrieve",
+    description=(
+        "Use this to look up CUDA performance guidance or unfamiliar concepts when forming the next prompt. "
+        "Can be used for profiler bottlenecks, memory-access issues, or unclear optimization choices. "
+        "Example query: 'shared memory tiling for matmul'. "
+        "Example output: '[source_type: doc] [source: ...] Use shared memory tiles...'"
+    ),
+)
+def rag_retrieve(
+    query: str,
+    runtime: ToolRuntime = None, # ToolRuntime[RefinedPromptContext]
+) -> str:
+    """Retrieve relevant references."""
+
     if runtime is None:
         return ""
 
