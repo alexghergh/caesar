@@ -219,7 +219,7 @@ def get_torch_profiler_info_mp(ref_arch_src: str,
     except Exception:
         # this might fail if the profiler fails to run for some reason, e.g. due
         # to some CUDA error; in such a case, pretend profiling never happened
-        result_queue.put("")
+        result_queue.put("Torch Profiler failed to run due to errors")
 
 
 # see CudaForge paper, appendix B
@@ -285,10 +285,10 @@ def get_ncu_kernel_metrics(ref_arch_src: str,
     ]
 
     # capture ncu output
-    try:
-        output = subprocess.check_output(cmd, text=True, stderr=subprocess.STDOUT)
-    except subprocess.CalledProcessError as e:
-        print("NCU failed with error: ", e)
+    output = subprocess.check_output(cmd, text=True, stderr=subprocess.STDOUT)
+    # filter == PROF == lines
+    output = '\n'.join([ln for ln in output.splitlines() if '==PROF==' not in ln])
+    output = output[:-448] # this removes an unnecessary Note: at the end
     return output
 
 
@@ -296,7 +296,7 @@ def get_ncu_kernel_metrics_mp(ref_arch_src: str,
                               kernel_src: str,
                               build_dir: str,
                               gpu_id: int,
-                              metrics: list[str] | str,
+                              metrics: list[str],
                               result_queue: mp.Queue) -> None:
     """
     Same as `get_ncu_kernel_metrics`, but meant to be called in a
@@ -312,4 +312,6 @@ def get_ncu_kernel_metrics_mp(ref_arch_src: str,
         )
         result_queue.put(info)
     except Exception:
-        result_queue.put("")
+        # this might fail if the profiler fails to run for some reason, e.g. due
+        # to some error; in such a case, pretend profiling never happened
+        result_queue.put("NCU failed to run due to errors.")
