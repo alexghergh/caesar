@@ -19,6 +19,7 @@ from KernelBenchInternal.dataset import (
     KERNELBENCH_LEVEL_3_RANDOM_SUBSET_DATASET,
     KERNELBENCH_LEVELS_12_REPRESENTATIVE_DATASET,
     CUDAFORGE_SUBSET,
+    METASTARK_SUBSET,
 )
 
 from state_machine import run_state_machine
@@ -45,6 +46,7 @@ dataset_name_to_dataset = {
     "KernelBench/levels12-subset": KERNELBENCH_LEVELS_12_REPRESENTATIVE_DATASET,
 
     "KernelBench/cudaforge-subset": CUDAFORGE_SUBSET,
+    "KernelBench/metastark-subset": METASTARK_SUBSET,
 
     # debug
     "KernelBench/level1-test": [

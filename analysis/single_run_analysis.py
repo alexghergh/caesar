@@ -17,6 +17,7 @@ from KernelBenchInternal.dataset import (
     KERNELBENCH_LEVEL_3_RANDOM_SUBSET_DATASET,
     KERNELBENCH_LEVELS_12_REPRESENTATIVE_DATASET,
     CUDAFORGE_SUBSET,
+    METASTARK_SUBSET,
 )
 
 # get root caesar directory (i.e., the parent of 'analysis')
@@ -53,6 +54,7 @@ dataset_name_to_dataset = {
     "KernelBench/levels12-subset": KERNELBENCH_LEVELS_12_REPRESENTATIVE_DATASET,
 
     "KernelBench/cudaforge-subset": CUDAFORGE_SUBSET,
+    "KernelBench/metastark-subset": METASTARK_SUBSET,
 
     # debug
     "KernelBench/level1-test": [
@@ -297,19 +299,19 @@ def main():
     )
 
     fastp = 1
+
     max_k = 8 # modify this to get best/mean@k, where k doesn't have to be max_k
     samples = 4
-
     ## There's a number of interesting statistics that we want
     ## 1. fast-p scores (with best kernel - best@k)
     ## 2. fast-p scores (with mean runtime - mean@k)
     ## 3. for a given p, calculate fast-p trajectory, given turns budgets
     ## 4. number of used tokens (input/output)
-
     print(f"Run: {run_group}/{run_name}")
     print(f"Results@k, with k={max_k}, samples={samples}")
 
     # 1. best fast-p scores
+
     print("=== Best@k ===")
     for p in [0, 0.5, 0.8, 1, 1.5, 2]:
         print(f"Fast-{p}: ", compute_best_fast_p_for_run(run_path=run_path,
