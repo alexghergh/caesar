@@ -83,6 +83,56 @@ Rules:
 - Do NOT suggest PyTorch-level changes; focus on CUDA-level actions.
 """
 
+# prompt state machine snippets (used to build prompt-agent input)
+PREVIOUSLY_GENERATED_KERNEL = """Previously generated kernel code:
+
+```python
+{prev_kernel_code}
+```
+"""
+
+PREVIOUSLY_GENERATED_BEST_AND_LAST_KERNELS = """Best kernel so far:
+
+```python
+{best_kernel_code}
+```
+
+Most recent kernel:
+
+```python
+{last_kernel_code}
+```
+"""
+
+COMPILER_FEEDBACK_PROMPT = """Compiler feedback:
+{compiler_feedback}
+"""
+
+CORRECTNESS_FEEDBACK_PROMPT = """Correctness feedback:
+{correctness_feedback}
+"""
+
+PROFILER_FEEDBACK_PROMPT = """Profiler feedback for the {kernel} kernel (runtime {runtime_ms} ms):
+{profiler_feedback}
+"""
+
+REFLECTION_COMPILER_FEEDBACK_INSTRUCTION = (
+    "Based on the compiler feedback, request the single most direct code "
+    "change to fix the compile issue.\n"
+)
+REFLECTION_CORRECTNESS_FEEDBACK_INSTRUCTION = (
+    "Based on the correctness feedback, request the single most direct code "
+    "change to fix the correctness issue.\n"
+)
+REFLECTION_PROFILER_FEEDBACK_INSTRUCTION = (
+    "Based on the profiler feedback, request one concrete code change to "
+    "improve runtime.\n"
+)
+REFLECTION_INSTRUCTION = (
+    "Request one concrete code change to improve runtime while preserving "
+    "correctness.\n"
+)
+
 # prompt agent input
 PROMPT_AGENT_USER_INPUT = """Generated kernel code (turn {turn}, runtime {runtime_ms} ms):
 
