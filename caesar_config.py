@@ -74,10 +74,14 @@ class CaesarRunConfig(Config):
             )
         )
         self.timing_baseline_filename = "baseline_time_torch.json"
+        # optional absolute path override for legacy configs
+        self.timing_baseline_path = None
 
         # logging
         self.log_dir_prefix = "./caesar_log_dir/"
         self.build_dir_prefix = "./caesar_build_dir/"
+        self.verbose = False
+        self.show_state = False
 
         # rag
         self.rag_docs_dir = "./rag_docs"
