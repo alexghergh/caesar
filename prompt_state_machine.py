@@ -1,18 +1,28 @@
 import os
-from typing import TypedDict
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from typing import Literal, TypedDict
+
+from langgraph.graph import END, START
+from langgraph.runtime import Runtime
+from langgraph.graph.state import CompiledStateGraph, StateGraph
 
 from KernelBenchInternal.utils import read_file
-from langchain_core.messages import AIMessage
-from langgraph.graph.state import CompiledStateGraph
 
 from caesar_config import CaesarRunConfig
-from conversation_info import ConversationInfo
-from rag import RagIndex
+
 from prompts import (
     CODE_AGENT_SYSTEM_PROMPT,
-    PROMPT_AGENT_USER_INPUT,
+    COMPILER_FEEDBACK_PROMPT,
+    CORRECTNESS_FEEDBACK_PROMPT,
+    PREVIOUSLY_GENERATED_BEST_AND_LAST_KERNELS,
+    PREVIOUSLY_GENERATED_KERNEL,
+    PROFILER_FEEDBACK_PROMPT,
+    REFLECTION_COMPILER_FEEDBACK_INSTRUCTION,
+    REFLECTION_CORRECTNESS_FEEDBACK_INSTRUCTION,
+    REFLECTION_INSTRUCTION,
+    REFLECTION_PROFILER_FEEDBACK_INSTRUCTION,
 )
+from utils import get_best_kernel_code, get_last_kernel_code
 
 
 REPO_TOP_PATH = os.path.abspath(
@@ -28,15 +38,26 @@ KERNEL_BENCH_ARCH_EXAMPLES_PATH = os.path.join(
 )
 
 
-# fed to the prompting agent
 @dataclass
-class RefinedPromptContext:
-    rag_index: RagIndex
-    conv_info: ConversationInfo
-    rag_scope: str
-    rag_top_k: int
-    problem_id: int
+class PromptKernelContext:
+    kernel_code: dict[int, str] = field(default_factory=dict)
+    eval_result: dict[int, object] = field(default_factory=dict)
+    compile_summary: dict[int, dict] = field(default_factory=dict)
+    runtime_summary: dict[int, dict] = field(default_factory=dict)
+    profiler_summary: dict[int, dict] = field(default_factory=dict)
+
+
+@dataclass
+class PromptRuntimeContext:
+    config: CaesarRunConfig
     turn: int
+    kernel_context: PromptKernelContext
+
+
+class PromptGraphState(TypedDict):
+    prompt: str
+    best_kernel_idx: int | None
+    last_kernel_idx: int | None
 
 
 def build_code_agent_system_prompt(
@@ -65,74 +86,199 @@ def build_code_agent_system_prompt(
     )
 
 
-def build_llm_prompt(
-    config: CaesarRunConfig,
-    prompt_agent: CompiledStateGraph,
-    turn: int,
-    problem_id: int,
-    thread_id: str,
-    rag_index: RagIndex,
-    conv_info: ConversationInfo,
-) -> str:
+def empty_prompt_handler(
+    state: PromptGraphState, runtime: Runtime[PromptRuntimeContext]
+) -> PromptGraphState:
+    return { 'prompt': '' }
 
-    if turn == 1:
-        # initial prompt, no info
-        base_prompt = "No kernel generated so far, as it is the first turn. The coding agent already has access to the problem's specifications, so just ask it to generate a kernel for now."
-    else:
-        eval_result = conv_info.eval_result
-        kernels = conv_info.kernel_code
 
-        # runtime of last kernel (or fail if no kernel generated)
-        kernel = kernels.get(turn - 1, 'failed to generate kernel')
-        runtime_perf = eval_result.get(turn - 1, 'failed to generate kernel').runtime
+def best_and_last_kernel_handler(
+    state: PromptGraphState, runtime: Runtime[PromptRuntimeContext]
+) -> PromptGraphState:
+    eval_result = runtime.context.kernel_context.eval_result
+    kernels = runtime.context.kernel_context.kernel_code
+    prompt = state['prompt']
 
-        # get the feedback from last turn
-        if (feedback := conv_info.compile_summary.get(turn - 1, '')) != '':
-            phase = 'compilation'
-            feedback = feedback['content']
-        elif (feedback := conv_info.runtime_summary.get(turn - 1, '')) != '':
-            phase = 'runtime correctness'
-            feedback = feedback['content']
-        elif (feedback := conv_info.profiler_summary.get(turn - 1, '')) != '':
-            phase = 'profiling'
-            feedback = feedback['content']
-        else:
-            phase = 'unknown (no information given)'
-            feedback = 'no feedback'
+    best_kernel_idx: int | None = get_best_kernel_code(eval_result)
+    last_kernel_idx: int | None = get_last_kernel_code(kernels)
 
-        # build the base prompt; this should just contain the necessary
-        # information + human prompt from last turns (e.g. feedback + generated
-        # best/last kernels)
-        base_prompt = PROMPT_AGENT_USER_INPUT.format(
-            turn=turn - 1,
-            runtime_ms=runtime_perf,
-            kernel_code=kernel,
-            phase=phase,
-            feedback=feedback,
+    if best_kernel_idx is None or best_kernel_idx == last_kernel_idx:
+        prompt += PREVIOUSLY_GENERATED_KERNEL.format(
+            prev_kernel_code=kernels[last_kernel_idx]
+        )
+    elif best_kernel_idx is not None and best_kernel_idx != last_kernel_idx:
+        prompt += PREVIOUSLY_GENERATED_BEST_AND_LAST_KERNELS.format(
+            best_kernel_code=kernels[best_kernel_idx],
+            last_kernel_code=kernels[last_kernel_idx],
         )
 
-    # base prompt
-    conv_info.prompt[turn] = base_prompt
+    return {
+        'prompt': prompt,
+        'best_kernel_idx': best_kernel_idx,
+        'last_kernel_idx': last_kernel_idx
+    }
 
-    # invoke a prompting agent to refine this prompt
-    response = prompt_agent.invoke({
-        "messages": [{
-            "role": "user",
-            "content": base_prompt,
-        }],
-        "configurable": {
-            "thread_id": thread_id,
-        }
-    }, context=RefinedPromptContext(
-        rag_index=rag_index,
-        conv_info=conv_info,
-        rag_scope=config.rag_scope,
-        rag_top_k=config.rag_top_k,
-        problem_id=problem_id,
-        turn=turn,
-    ))
-    last_message: AIMessage = response["messages"][-1]
-    final_prompt = last_message.text
-    conv_info.formatted_prompt[turn] = final_prompt
 
-    return final_prompt
+def feedback_decision(
+    state: PromptGraphState, runtime: Runtime[PromptRuntimeContext]
+) -> Literal[
+    'compiler_feedback_handler',
+    'correctness_feedback_handler',
+    'profiler_feedback_handler',
+    'final_prompt_handler'
+]:
+    config = runtime.context.config
+    eval_result = runtime.context.kernel_context.eval_result
+    last_kernel_idx = state['last_kernel_idx']
+
+    if (
+        config.use_compiler_feedback
+        and eval_result[last_kernel_idx].metadata != {}
+        and eval_result[last_kernel_idx].compiled is False
+    ):
+        return 'compiler_feedback_handler'
+
+    if (
+        config.use_correctness_feedback
+        and eval_result[last_kernel_idx].metadata != {}
+        and eval_result[last_kernel_idx].compiled is True
+        and eval_result[last_kernel_idx].correctness is False
+    ):
+        return 'correctness_feedback_handler'
+
+    if config.use_profiler_feedback:
+        return 'profiler_feedback_handler'
+
+    return 'final_prompt_handler'
+
+
+def compiler_feedback_handler(
+    state: PromptGraphState, runtime: Runtime[PromptRuntimeContext]
+) -> PromptGraphState:
+    eval_result = runtime.context.kernel_context.eval_result
+    compile_summary = runtime.context.kernel_context.compile_summary
+    prompt = state['prompt']
+    last_kernel_idx = state['last_kernel_idx']
+
+    if (
+        eval_result[last_kernel_idx].metadata != {}
+        and eval_result[last_kernel_idx].compiled is False
+    ):
+        prompt += COMPILER_FEEDBACK_PROMPT.format(
+            compiler_feedback=compile_summary[last_kernel_idx]["content"]
+        )
+        prompt += REFLECTION_COMPILER_FEEDBACK_INSTRUCTION
+
+    return { 'prompt': prompt }
+
+
+def correctness_feedback_handler(
+    state: PromptGraphState, runtime: Runtime[PromptRuntimeContext]
+) -> PromptGraphState:
+    runtime_summary = runtime.context.kernel_context.runtime_summary
+    prompt = state['prompt']
+    last_kernel_idx = state['last_kernel_idx']
+
+    prompt += CORRECTNESS_FEEDBACK_PROMPT.format(
+        correctness_feedback=runtime_summary[last_kernel_idx]['content'],
+    )
+    prompt += REFLECTION_CORRECTNESS_FEEDBACK_INSTRUCTION
+    return { 'prompt': prompt }
+
+
+def profiler_feedback_handler(
+    state: PromptGraphState, runtime: Runtime[PromptRuntimeContext]
+) -> PromptGraphState:
+    eval_result = runtime.context.kernel_context.eval_result
+    profiler_summary = runtime.context.kernel_context.profiler_summary
+    prompt = state['prompt']
+    best_kernel_idx = state['best_kernel_idx']
+    last_kernel_idx = state['last_kernel_idx']
+
+    if (
+        best_kernel_idx is not None
+        and profiler_summary.get(best_kernel_idx, "") != ""
+    ):
+        prompt += PROFILER_FEEDBACK_PROMPT.format(
+            kernel="best",
+            profiler_feedback=profiler_summary[best_kernel_idx]['content'],
+            runtime_ms=eval_result[best_kernel_idx].runtime,
+        )
+
+    if (
+        last_kernel_idx != best_kernel_idx
+        and profiler_summary.get(last_kernel_idx, "") != ""
+        and eval_result[last_kernel_idx].runtime >
+            eval_result[best_kernel_idx].runtime
+    ):
+        prompt += PROFILER_FEEDBACK_PROMPT.format(
+            kernel="previous",
+            profiler_feedback=profiler_summary[last_kernel_idx]['content'],
+            runtime_ms=eval_result[last_kernel_idx].runtime,
+        )
+
+    prompt += REFLECTION_PROFILER_FEEDBACK_INSTRUCTION
+    return { 'prompt': prompt }
+
+
+def final_prompt_handler(
+    state: PromptGraphState, runtime: Runtime[PromptRuntimeContext]
+) -> PromptGraphState:
+    prompt = state['prompt']
+    prompt += REFLECTION_INSTRUCTION
+    return { 'prompt': prompt }
+
+
+def _init_prompt_state_machine_graph() -> CompiledStateGraph:
+    builder = StateGraph(PromptGraphState, context_schema=PromptRuntimeContext)
+
+    builder.add_node('empty_prompt_handler', empty_prompt_handler)
+    builder.add_node('best_and_last_kernel_handler', best_and_last_kernel_handler)
+    builder.add_node('compiler_feedback_handler', compiler_feedback_handler)
+    builder.add_node('correctness_feedback_handler', correctness_feedback_handler)
+    builder.add_node('profiler_feedback_handler', profiler_feedback_handler)
+    builder.add_node('final_prompt_handler', final_prompt_handler)
+
+    builder.add_conditional_edges(
+        START,
+        lambda state, runtime:
+            'empty_prompt_handler'
+            if (
+                runtime.context.kernel_context.kernel_code is None
+                or all(
+                    not v for v in runtime.context.kernel_context.kernel_code.values()
+                )
+            ) else
+            'best_and_last_kernel_handler',
+        ['empty_prompt_handler', 'best_and_last_kernel_handler']
+    )
+    builder.add_conditional_edges('best_and_last_kernel_handler',
+                                  feedback_decision)
+    builder.add_edge('empty_prompt_handler', END)
+    builder.add_edge('compiler_feedback_handler', END)
+    builder.add_edge('correctness_feedback_handler', END)
+    builder.add_edge('profiler_feedback_handler', END)
+    builder.add_edge('final_prompt_handler', END)
+
+    return builder.compile()
+
+
+def build_llm_prompt(
+    config: CaesarRunConfig,
+    turn: int,
+    kernel_context: PromptKernelContext,
+) -> str:
+    prompt_graph = _init_prompt_state_machine_graph()
+
+    prompt = prompt_graph.invoke({
+        'prompt': '',
+        'best_kernel_idx': None,
+        'last_kernel_idx': None,
+    }, context={
+        'config': config,
+        'turn': turn,
+        'kernel_context': kernel_context,
+    })['prompt']
+
+    return prompt
+

@@ -1,3 +1,5 @@
+import os
+
 from pydra import Config, REQUIRED
 
 from strategy import Strategy
@@ -55,6 +57,19 @@ class CaesarRunConfig(Config):
         self.num_perf_trials = 100
         self.timeout = 600 # time out per round, set to 10 min
 
+        # timing baselines (used for MCTS reward speedup)
+        self.timing_baseline_dir = os.path.abspath(
+            os.path.join(
+                os.path.dirname(__file__),
+                "..",
+                "KernelBench",
+                "results",
+                "timing",
+                "H100_tsubame",
+            )
+        )
+        self.timing_baseline_filename = "baseline_time_torch.json"
+
         # logging
         self.log_dir_prefix = "./caesar_log_dir/"
         self.build_dir_prefix = "./caesar_build_dir/"
@@ -66,9 +81,11 @@ class CaesarRunConfig(Config):
         self.rag_top_k = 4
         self.rag_scope = "global"  # or "problem"
 
-        # output verbosity
-        self.verbose = False
-        self.show_state = False
+        # MCTS
+        self.mcts_max_children = 3
+        self.mcts_exploration = 1.4
+
+
 
     # server examples
 
@@ -96,4 +113,3 @@ class CaesarRunConfig(Config):
 
     def __repr__(self):
         return f"CaesarConfig({self.to_dict()})"
-

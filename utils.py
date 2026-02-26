@@ -6,9 +6,10 @@ import signal
 from KernelBenchInternal.eval import KernelExecResult
 
 from langgraph.graph.state import CompiledStateGraph
-from langgraph.checkpoint.memory import InMemorySaver
+
 from langchain.agents import create_agent
-from langchain.agents.middleware import SummarizationMiddleware, TodoListMiddleware
+from langchain.agents.middleware import SummarizationMiddleware
+
 from langchain_openai import ChatOpenAI
 from langchain_anthropic import ChatAnthropic
 from langchain_google_genai import ChatGoogleGenerativeAI
@@ -419,7 +420,7 @@ def create_code_agent(
                 keep=('messages', 20),
             )
         ],
-        checkpointer=InMemorySaver(), # keep conversation history
+
     )
 
     return code_agent
@@ -472,9 +473,8 @@ def create_prompt_agent(
                 trigger=('tokens', int(max_tokens * 0.8)),
                 keep=('messages', 20),
             ),
-            TodoListMiddleware(),
         ],
-        checkpointer=InMemorySaver(), # keep conversation history
+
     )
 
     return prompt_agent

@@ -1,5 +1,5 @@
-from typing import Any
 from dataclasses import dataclass, field, fields
+from typing import Any
 
 
 @dataclass
@@ -13,25 +13,19 @@ class ConversationInfo:
     prompt_agent_system_prompt: str = field(default_factory=str)
     reviewer_agent_system_prompt: str = field(default_factory=str)
 
-    ## per turn info
+    # prompt agent (per turn)
+    prompt_agent_input: dict[int, str] = field(default_factory=dict)
+    prompt_agent_output: dict[int, str] = field(default_factory=dict)
+    input_prompt: dict[int, str] = field(default_factory=dict)
 
-    # prompt agent
-    prompt: dict[int, str] = field(default_factory=dict)
-    formatted_prompt: dict[int, str] = field(default_factory=dict)
-
-    # code agent
+    # code agent (per turn)
     model_response: dict[int, str] = field(default_factory=dict)
     kernel_code: dict[int, str] = field(default_factory=dict)
     token_usage: dict[int, dict] = field(default_factory=dict)
     eval_result: dict[int, dict] = field(default_factory=dict)
     profiler_result: dict[int, str] = field(default_factory=dict)
 
-    # rag tracking (prompt agent)
-    rag_query: dict[int, str] = field(default_factory=dict)
-    rag_context: dict[int, str] = field(default_factory=dict)
-    rag_scope: dict[int, str] = field(default_factory=dict)
-
-    # reviewer agent stuff
+    # reviewer agent (per turn)
     compile_prompt: dict[int, str] = field(default_factory=dict)
     compile_summary: dict[int, dict] = field(default_factory=dict)
     runtime_prompt: dict[int, str] = field(default_factory=dict)
@@ -39,12 +33,17 @@ class ConversationInfo:
     profiler_prompt: dict[int, str] = field(default_factory=dict)
     profiler_summary: dict[int, dict] = field(default_factory=dict)
 
-    def __getitem__(self, key: Any):
-        # key is turn / round
-        if not isinstance(key, int):
-            raise IndexError(f"{self.__class__.__name__} doesn't expect non-integer indexing")
+    # rag tracking (per turn)
+    rag_query: dict[int, str] = field(default_factory=dict)
+    rag_context: dict[int, str] = field(default_factory=dict)
+    rag_scope: dict[int, str] = field(default_factory=dict)
 
-        # we gather the data for the specific turn from each of the fields
+    def __getitem__(self, key: int):
+        if not isinstance(key, int):
+            raise IndexError(
+                f"{self.__class__.__name__} doesn't expect non-integer indexing"
+            )
+
         ret_val: dict = {}
         for f in fields(self):
             value = getattr(self, f.name)
@@ -55,7 +54,6 @@ class ConversationInfo:
 
         return ret_val
 
-    # helper setter method
     def update_turn_data(self, turn: int, turn_data: dict[str, Any]):
         """
         Update turn of conversation data. Careful, this overrides the whole turn

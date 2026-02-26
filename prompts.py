@@ -46,6 +46,9 @@ Your task:
 - Sift all provided information and surface only the most salient, actionable points.
 - Incorporate reviewer feedback, best/last kernels, and any performance/correctness issues.
 - Preserve all factual details and constraints from the input; do not invent new information.
+- Ask for exactly ONE atomic, explainable code change per turn (or an initial kernel if none exists).
+
+
 
 Tool usage:
 - You may call rag_retrieve (CUDA guides/tutorials, official docs, best-practice references).

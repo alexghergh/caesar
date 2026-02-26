@@ -78,8 +78,10 @@ class CaesarLogger:
             llm_info.reviewer_agent_system_prompt
         )
 
-        self.current_log[turn]['prompt'] = llm_info.prompt.get(turn, '')
-        self.current_log[turn]['formatted_prompt'] = llm_info.formatted_prompt.get(turn, '')
+        self.current_log[turn]['prompt_agent_input'] = llm_info.prompt_agent_input.get(turn, '')
+        self.current_log[turn]['prompt_agent_output'] = llm_info.prompt_agent_output.get(turn, '')
+        self.current_log[turn]['input_prompt'] = llm_info.input_prompt.get(turn, '')
+
 
         self.current_log[turn]['model_response'] = llm_info.model_response.get(turn, '')
         self.current_log[turn]['kernel_code'] = llm_info.kernel_code.get(turn, '')

@@ -2,6 +2,7 @@ import time
 import os
 import copy
 import json
+import re
 import multiprocessing as mp
 from pathlib import Path
 from dataclasses import dataclass
@@ -13,7 +14,8 @@ from KernelBenchInternal.utils import (
     read_file,
 )
 from langsmith import trace
-from langchain_core.messages import AIMessage
+from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
+
 from langgraph.graph import StateGraph, START, END
 from langgraph.graph.state import CompiledStateGraph
 from langgraph.runtime import Runtime
@@ -24,25 +26,45 @@ from eval import (
     get_ncu_kernel_metrics_mp,
     top24_metrics_cuda_forge,
 )
-from prompt_state_machine import build_llm_prompt, build_code_agent_system_prompt
-from prompts import REVIEWER_AGENT_SYSTEM_PROMPT, PROMPT_AGENT_SYSTEM_PROMPT
+from prompt_state_machine import (
+    build_llm_prompt,
+    build_code_agent_system_prompt,
+    PromptKernelContext,
+)
+
 from prompts import (
     COMPILE_SUMMARY_USER_INPUT,
     RUNTIME_SUMMARY_USER_INPUT,
     PROFILER_SUMMARY_USER_INPUT,
+    REVIEWER_AGENT_SYSTEM_PROMPT,
+    PROMPT_AGENT_SYSTEM_PROMPT,
 )
+
+
+
+from mcts import MCTSTree, compute_reward
 from states import StateOutcome
-from work import WorkArgs
+
+
 from logger import CaesarLogger
+from work import WorkArgs
+
 from utils import (
     ensure_json_serializable,
     create_code_agent,
     create_prompt_agent,
     create_reviewer_agent,
+    fetch_baseline_time_by_problem_id,
 )
+
 from orchestrator import GPUOrchestrator
+
 from caesar_config import CaesarRunConfig
+
 from conversation_info import ConversationInfo
+
+
+
 from rag import RagIndex, build_or_load_rag_index, rag_retrieve
 
 
@@ -60,9 +82,10 @@ class CaesarRuntimeContext:
     code_agent: CompiledStateGraph
     prompt_agent: CompiledStateGraph
     reviewer_agent: CompiledStateGraph
-    code_thread_id: str
-    prompt_thread_id: str
+    mcts_tree: MCTSTree
+    baseline_runtime_ms: float | None
     rag_index: RagIndex
+
 
 
 # graph state that is updated when iterating between the state machine rounds
@@ -70,6 +93,49 @@ class CaesarGraphState(TypedDict):
     conversation_info: ConversationInfo
     current_turn: int
     state_outcome: StateOutcome
+    selected_node_id: int
+    selected_node_path: list[int]
+    current_node_id: int
+
+
+def _infer_level_from_problem_path(problem_path: str) -> int | None:
+    if not problem_path:
+        return None
+    match = re.search(r"level(\d+)", problem_path)
+    if not match:
+        return None
+    try:
+        return int(match.group(1))
+    except ValueError:
+        return None
+
+
+def _infer_level_from_dataset_name(dataset_name: str) -> int | None:
+    if not dataset_name:
+        return None
+    # Mixed-level datasets (e.g., levels12-subset) should not infer from name.
+    if "levels" in dataset_name:
+        return None
+    match = re.search(r"level(\d+)", dataset_name)
+    if not match:
+        return None
+    try:
+        return int(match.group(1))
+    except ValueError:
+        return None
+
+
+def _coerce_baseline_ms(baseline_entry) -> float | None:
+    if isinstance(baseline_entry, (int, float)):
+        return float(baseline_entry)
+    if isinstance(baseline_entry, dict):
+        for key in ("mean", "median", "min", "baseline_ms", "runtime_ms"):
+            value = baseline_entry.get(key)
+            if isinstance(value, (int, float)) and value > 0:
+                return float(value)
+    return None
+
+
 
 
 def setup_state_machine_handler(
@@ -132,7 +198,8 @@ def setup_state_machine_handler(
             # if these are empty, this turn was corrupted somehow
             # re-do this turn
             if (
-                conversation_info.formatted_prompt[turn] == ""
+                conversation_info.input_prompt[turn] == ""
+
                 or conversation_info.model_response[turn] == ""
                 or conversation_info.kernel_code[turn] == ""
             ):
@@ -164,6 +231,22 @@ def setup_state_machine_handler(
     return state
 
 
+
+
+def select_mcts_node_handler(
+    state: CaesarGraphState, runtime: Runtime[CaesarRuntimeContext]
+) -> CaesarGraphState:
+    """
+    Select the next MCTS node to expand.
+    """
+    tree = runtime.context.mcts_tree
+    path, node_id = tree.select()
+    state['selected_node_id'] = node_id
+    state['selected_node_path'] = path
+    return state
+
+
+
 def create_prompt_handler(
     state: CaesarGraphState, runtime: Runtime[CaesarRuntimeContext]
 ) -> CaesarGraphState:
@@ -174,7 +257,9 @@ def create_prompt_handler(
     prompt_agent = runtime.context.prompt_agent
     work = runtime.context.work
     conv_info = state['conversation_info']
+    tree = runtime.context.mcts_tree
     current_turn = state['current_turn']
+
 
     if config.show_state:
         print(
@@ -182,19 +267,87 @@ def create_prompt_handler(
             f"Round {current_turn}, entering state: CREATE_PROMPT"
         )
 
-    # initialize this round's prompt with the information so far
-    conv_info.formatted_prompt[current_turn] = build_llm_prompt(
+    parent_id = state['selected_node_id']
+    parent_node = tree.get_node(parent_id)
+
+    # create a new child node for this mutation
+    child_id = tree.add_child(parent_id)
+    state['current_node_id'] = child_id
+    child_node = tree.get_node(child_id)
+
+    # build kernel context for prompt construction
+    kernel_context = PromptKernelContext()
+    best_node = tree.best_node()
+    if best_node is not None and best_node.node_id != parent_id:
+        if best_node.kernel_code:
+            kernel_context.kernel_code[best_node.node_id] = best_node.kernel_code
+        if best_node.eval_result is not None:
+            kernel_context.eval_result[best_node.node_id] = best_node.eval_result
+        if best_node.profiler_summary:
+            kernel_context.profiler_summary[best_node.node_id] = (
+                best_node.profiler_summary
+            )
+
+    if parent_node.kernel_code:
+        kernel_context.kernel_code[parent_id] = parent_node.kernel_code
+    if parent_node.eval_result is not None:
+        kernel_context.eval_result[parent_id] = parent_node.eval_result
+    if parent_node.compile_summary:
+        kernel_context.compile_summary[parent_id] = parent_node.compile_summary
+    if parent_node.runtime_summary:
+        kernel_context.runtime_summary[parent_id] = parent_node.runtime_summary
+    if parent_node.profiler_summary:
+        kernel_context.profiler_summary[parent_id] = parent_node.profiler_summary
+
+    base_prompt = build_llm_prompt(
         config=config,
-        prompt_agent=prompt_agent,
         turn=current_turn,
-        problem_id=work.problem_id,
-        thread_id=runtime.context.prompt_thread_id,
-        rag_index=runtime.context.rag_index,
-        conv_info=conv_info,
+        kernel_context=kernel_context,
     )
+    conv_info.prompt_agent_input[current_turn] = base_prompt
+
+    if base_prompt.strip() == "":
+        final_prompt = ""
+        child_node.prompt_messages = copy.deepcopy(parent_node.prompt_messages)
+    else:
+        prompt_messages = list(parent_node.prompt_messages)
+        if prompt_messages and isinstance(prompt_messages[0], BaseMessage):
+            prompt_messages.append(HumanMessage(content=base_prompt))
+        else:
+            prompt_messages.append({"role": "user", "content": base_prompt})
+
+        prompt_context = {
+            "rag_index": runtime.context.rag_index,
+            "conv_info": conv_info,
+            "rag_top_k": runtime.context.config.rag_top_k,
+            "rag_scope": runtime.context.config.rag_scope,
+            "problem_id": runtime.context.work.problem_id,
+            "turn": current_turn,
+        }
+
+        response = prompt_agent.invoke({"messages": prompt_messages}, context=prompt_context)
+
+
+        if isinstance(response, dict) and "messages" in response:
+            messages = response["messages"]
+            last_message: AIMessage = messages[-1]
+            final_prompt = (
+                getattr(last_message, "content", None)
+                or getattr(last_message, "text", "")
+            )
+            child_node.prompt_messages = messages
+        else:
+            final_prompt = response.content
+            child_node.prompt_messages = (
+                prompt_messages + [{"role": "assistant", "content": final_prompt}]
+            )
+
+    conv_info.prompt_agent_output[current_turn] = final_prompt
+    conv_info.input_prompt[current_turn] = final_prompt
 
     state['state_outcome'] = StateOutcome.Start
     return state
+
 
 
 def query_llm_handler(
@@ -208,6 +361,9 @@ def query_llm_handler(
     code_agent = runtime.context.code_agent
     current_turn = state['current_turn']
     conv_info = state['conversation_info']
+    tree = runtime.context.mcts_tree
+    node = tree.get_node(state['current_node_id'])
+
 
     if config.show_state:
         print(
@@ -215,23 +371,30 @@ def query_llm_handler(
             f"Round {current_turn}, entering state: QUERY_LLM"
         )
 
-    # query LLM coding agent
-    response = code_agent.invoke(
-        {
-            "messages": [{
-                "role": "user",
-                "content": conv_info.formatted_prompt[current_turn],
-            }]
-        },
-        config={
-            "configurable": {
-                "thread_id": runtime.context.code_thread_id,
-            }
-        }
-    )
-    last_message: AIMessage = response["messages"][-1]
-    model_content = last_message.text
-    usage_metadata = last_message.usage_metadata
+    prompt_text = conv_info.input_prompt.get(current_turn, "")
+    coding_messages = list(node.coding_messages)
+    if coding_messages and isinstance(coding_messages[0], BaseMessage):
+        coding_messages.append(HumanMessage(content=prompt_text))
+    else:
+        coding_messages.append({"role": "user", "content": prompt_text})
+
+    response = code_agent.invoke({"messages": coding_messages})
+
+    if isinstance(response, dict) and "messages" in response:
+        messages = response["messages"]
+        last_message: AIMessage = messages[-1]
+        model_content = (
+            getattr(last_message, "content", None)
+            or getattr(last_message, "text", "")
+        )
+        usage_metadata = last_message.usage_metadata
+        node.coding_messages = messages
+    else:
+        model_content = response.content
+        usage_metadata = getattr(response, "usage_metadata", {}) or {}
+        node.coding_messages = (
+            coding_messages + [{"role": "assistant", "content": model_content}]
+        )
 
     conv_info.model_response[current_turn] = model_content
     conv_info.token_usage[current_turn] = usage_metadata
@@ -240,19 +403,23 @@ def query_llm_handler(
         conv_info.model_response[current_turn], ["python", "cpp"]
     )
 
-    # if we failed to generate a kernel, simply move to the next round
     if kernel_code is None or len(kernel_code) == 0:
         if config.verbose:
             print(
                 f"[GENERATE {work.problem_id}/{work.sample_id}] "
                 "Failed to generate kernel code."
             )
+        node.kernel_code = ""
+        node.reward = 0.0
+        tree.backprop(state['selected_node_path'] + [node.node_id], 0.0)
         state['state_outcome'] = StateOutcome.GenerateFail
     else:
         conv_info.kernel_code[current_turn] = kernel_code
+        node.kernel_code = kernel_code
         state['state_outcome'] = StateOutcome.GenerateSuccess
 
     return state
+
 
 
 def compile_handler(
@@ -263,10 +430,13 @@ def compile_handler(
     """
     config = runtime.context.config
     reviewer_agent = runtime.context.reviewer_agent
+    tree = runtime.context.mcts_tree
 
     work = runtime.context.work
     current_turn = state['current_turn']
     conv_info = state['conversation_info']
+    node = tree.get_node(state['current_node_id'])
+
 
     if config.show_state:
         print(
@@ -275,9 +445,8 @@ def compile_handler(
         )
 
     with runtime.context.worker_semaphore:
-        # compile kernel and build cache
         returncode, stdout, stderr = compile_single_sample(
-            kernel_src=conv_info.kernel_code[current_turn],
+            kernel_src=node.kernel_code,
             gpu_arch=config.gpu_arch,
             build_dir=runtime.context.build_dir,
             timeout_seconds=config.timeout
@@ -289,8 +458,6 @@ def compile_handler(
         print(f"[COMPILE {work.problem_id}/{work.sample_id}] Compile stderr: ...{stderr[-1000:]}")
 
     if returncode == 0:
-        # write partial eval result here, since compilation succeeded
-        # we'll write more later if doing correctness check
         conv_info.eval_result[current_turn] = kernel_eval.KernelExecResult(
             compiled=True,
             metadata={
@@ -298,13 +465,12 @@ def compile_handler(
                 "device": "cpu",
             }
         )
+        node.eval_result = conv_info.eval_result[current_turn]
         state['state_outcome'] = StateOutcome.CompileSuccess
     else:
-        # summarize the relevant parts of the output; this should curb
-        # over-verbose output from the compiler on some error types
         comp_prompt = COMPILE_SUMMARY_USER_INPUT.format(
-            kernel_code=conv_info.kernel_code[current_turn],
-            stdout=stdout[-100_000:], # limit characters in output
+            kernel_code=node.kernel_code,
+            stdout=stdout[-100_000:],
             stderr=stderr[-100_000:],
         )
         conv_info.compile_prompt[current_turn] = comp_prompt
@@ -318,15 +484,19 @@ def compile_handler(
         })
 
         last_message: AIMessage = reviewer_response["messages"][-1]
-        reviewer_content = last_message.text
+        reviewer_content = (
+            getattr(last_message, "content", None)
+            or getattr(last_message, "text", "")
+        )
         reviewer_usage = last_message.usage_metadata
 
-        conv_info.compile_summary[current_turn] = {
+        summary = {
             "content": reviewer_content,
             "token_usage": reviewer_usage,
         }
+        conv_info.compile_summary[current_turn] = summary
+        node.compile_summary = summary
 
-        # register compilation failure as eval result
         conv_info.eval_result[current_turn] = kernel_eval.KernelExecResult(
             compiled=False,
             correctness=False,
@@ -336,8 +506,15 @@ def compile_handler(
                 "device": "cpu"
             }
         )
+        node.eval_result = conv_info.eval_result[current_turn]
+
+        reward = compute_reward(node.eval_result, runtime.context.baseline_runtime_ms)
+        node.reward = reward
+        tree.backprop(state['selected_node_path'] + [node.node_id], reward)
+
         state['state_outcome'] = StateOutcome.CompileFail
     return state
+
 
 
 def correctness_check_handler(
@@ -348,12 +525,13 @@ def correctness_check_handler(
     """
     config = runtime.context.config
     reviewer_agent = runtime.context.reviewer_agent
-
     orchestrator = runtime.context.orchestrator
     work = runtime.context.work
     ref_problem_src = runtime.context.ref_problem_src
     current_turn = state['current_turn']
     conv_info = state['conversation_info']
+    tree = runtime.context.mcts_tree
+    node = tree.get_node(state['current_node_id'])
 
     if config.show_state:
         print(
@@ -371,17 +549,12 @@ def correctness_check_handler(
                 f"Acquired GPU {gpu_id}"
             )
 
-        # launch a separate process to do the GPU work, as each process
-        # creates a pytorch context on the GPU; we want to avoid each
-        # CPU worker having such a separate context that persists, so
-        # spawning a separate process will clear the cache when the
-        # process finishes
         result_queue = mp.Queue()
         proc = mp.Process(
             target=evaluate_single_sample_src_mp,
             args=(
                 ref_problem_src,
-                conv_info.kernel_code[current_turn],
+                node.kernel_code,
                 config,
                 runtime.context.build_dir,
                 gpu_id,
@@ -395,7 +568,6 @@ def correctness_check_handler(
         work_time = time.time() - start_time
 
         if proc.is_alive():
-            # this means we reached timeout
             proc.terminate()
             print(
                 f"[CORRECTNESS {work.problem_id}/{work.sample_id}] "
@@ -411,6 +583,7 @@ def correctness_check_handler(
                     "device": f"cuda:{gpu_id}"
                 }
             )
+            node.eval_result = conv_info.eval_result[current_turn]
         else:
             result = result_queue.get()
 
@@ -420,17 +593,13 @@ def correctness_check_handler(
                     result,
                 )
 
-            # record result (fields should be correctly set, just make sure to
-            # set compile=True)
             result.compiled = True
             conv_info.eval_result[current_turn] = result
+            node.eval_result = result
 
-            # if compiled and is correct
             if result is not None and result.compiled and result.correctness:
                 state['state_outcome'] = StateOutcome.CorrectnessSuccess
             else:
-
-                # summarize the correctness error to aid in the next round
                 meta = result.metadata.get("correctness_issue", "")
                 if meta == "":
                     meta = result.metadata.get("cuda_error", "")
@@ -440,7 +609,7 @@ def correctness_check_handler(
                     meta = result.metadata.get("other_error", "")
 
                 run_prompt = RUNTIME_SUMMARY_USER_INPUT.format(
-                    kernel_code=conv_info.kernel_code[current_turn],
+                    kernel_code=node.kernel_code,
                     metadata=meta,
                 )
                 conv_info.runtime_prompt[current_turn] = run_prompt
@@ -453,13 +622,18 @@ def correctness_check_handler(
                     ]
                 })
                 last_message: AIMessage = reviewer_response["messages"][-1]
-                reviewer_content = last_message.text
+                reviewer_content = (
+                    getattr(last_message, "content", None)
+                    or getattr(last_message, "text", "")
+                )
                 reviewer_usage = last_message.usage_metadata
 
-                conv_info.runtime_summary[current_turn] = {
+                summary = {
                     "content": reviewer_content,
                     "token_usage": reviewer_usage,
                 }
+                conv_info.runtime_summary[current_turn] = summary
+                node.runtime_summary = summary
 
                 state['state_outcome'] = StateOutcome.CorrectnessFail
 
@@ -469,12 +643,17 @@ def correctness_check_handler(
                     f"Working on GPU {gpu_id} for {work_time:.2f} seconds"
                 )
 
+        reward = compute_reward(node.eval_result, runtime.context.baseline_runtime_ms)
+        node.reward = reward
+        tree.backprop(state['selected_node_path'] + [node.node_id], reward)
+
         if config.verbose:
             print(
                 f"[CORRECTNESS {work.problem_id}/{work.sample_id}] "
                 f"Released GPU {gpu_id}"
             )
     return state
+
 
 
 def performance_handler(
@@ -491,6 +670,9 @@ def performance_handler(
     ref_problem_src = runtime.context.ref_problem_src
     current_turn = state['current_turn']
     conv_info = state['conversation_info']
+    tree = runtime.context.mcts_tree
+    node = tree.get_node(state['current_node_id'])
+
 
     if config.show_state:
         print(
@@ -511,11 +693,15 @@ def performance_handler(
             target=get_ncu_kernel_metrics_mp,
             args=(
                 ref_problem_src,
-                conv_info.kernel_code[current_turn],
+                node.kernel_code,
+
                 runtime.context.build_dir,
                 gpu_id,
+                config.num_perf_trials,
                 top24_metrics_cuda_forge,
+                42,
                 result_queue,
+
             ),
         )
         proc.start()
@@ -525,9 +711,8 @@ def performance_handler(
 
         conv_info.profiler_result[current_turn] = result
 
-        # summarize the profiler output
         prof_prompt = PROFILER_SUMMARY_USER_INPUT.format(
-            kernel_code=conv_info.kernel_code[current_turn],
+            kernel_code=node.kernel_code,
             profiler_output=result,
         )
         conv_info.profiler_prompt[current_turn] = prof_prompt
@@ -540,13 +725,20 @@ def performance_handler(
             ]
         })
         last_message: AIMessage = reviewer_response["messages"][-1]
-        reviewer_content = last_message.text
+        reviewer_content = (
+            getattr(last_message, "content", None)
+            or getattr(last_message, "text", "")
+        )
         reviewer_usage = last_message.usage_metadata
 
-        conv_info.profiler_summary[current_turn] = {
+        summary = {
             "content": reviewer_content,
             "token_usage": reviewer_usage,
         }
+        conv_info.profiler_summary[current_turn] = summary
+        node.profiler_summary = summary
+
+
 
         if config.verbose:
             print(
@@ -609,13 +801,13 @@ def _init_state_machine_graph() -> CompiledStateGraph:
     """
     Initialize langgraph state graph.
     """
-    # set up langgraph state and graph transitions
     builder = StateGraph(CaesarGraphState, context_schema=CaesarRuntimeContext)
 
     # init
     builder.add_node('setup_state_machine_handler', setup_state_machine_handler)
 
     # actual machine states
+    builder.add_node('select_mcts_node_handler', select_mcts_node_handler)
     builder.add_node('create_prompt_handler', create_prompt_handler)
     builder.add_node('query_llm_handler', query_llm_handler)
     builder.add_node('compile_handler', compile_handler)
@@ -630,10 +822,11 @@ def _init_state_machine_graph() -> CompiledStateGraph:
         'setup_state_machine_handler',
         lambda state: state['state_outcome'],
         {
-            StateOutcome.SetupDone: 'create_prompt_handler',
+            StateOutcome.SetupDone: 'select_mcts_node_handler',
             StateOutcome.SetupFinishRun: END
         }
     )
+    builder.add_edge('select_mcts_node_handler', 'create_prompt_handler')
     builder.add_edge('create_prompt_handler', 'query_llm_handler')
     builder.add_conditional_edges(
         'query_llm_handler',
@@ -667,18 +860,13 @@ def _init_state_machine_graph() -> CompiledStateGraph:
         'finish_turn_handler',
         lambda state: state['state_outcome'],
         {
-            StateOutcome.NextTurn: 'create_prompt_handler',
+            StateOutcome.NextTurn: 'select_mcts_node_handler',
             StateOutcome.EndRun: END
         }
     )
 
-    # compile graph
-    graph = builder.compile()
+    return builder.compile()
 
-    # save an image of the graph's state
-    # print(graph.get_graph().draw_mermaid())
-    # graph.get_graph().draw_mermaid_png(output_file_path='state_machine_graph.png')
-    return graph
 
 
 def init_and_run_graph(
@@ -720,18 +908,68 @@ def init_and_run_graph(
             manifest_path=config.rag_manifest_path,
         )
 
+        mcts_tree = MCTSTree(
+            max_children=config.mcts_max_children,
+            exploration=config.mcts_exploration,
+        )
+        baseline_runtime_ms: float | None = None
+        baseline_time_path = None
+        if getattr(config, "timing_baseline_dir", None) and getattr(
+            config, "timing_baseline_filename", None
+        ):
+            baseline_time_path = os.path.join(
+                config.timing_baseline_dir, config.timing_baseline_filename
+            )
+        elif getattr(config, "timing_baseline_path", None):
+            baseline_time_path = config.timing_baseline_path
+
+        if baseline_time_path:
+            level = _infer_level_from_problem_path(work.problem_path)
+            if level is None:
+                level = _infer_level_from_dataset_name(config.dataset_name)
+            if level is None:
+                if config.verbose:
+                    print(
+                        "[TIMING] Could not infer dataset level from problem "
+                        f"path {work.problem_path} or dataset "
+                        f"{config.dataset_name}; skipping baseline timing."
+                    )
+            else:
+                try:
+                    baseline_entry = fetch_baseline_time_by_problem_id(
+                        baseline_time_filepath=baseline_time_path,
+                        level=level,
+                        problem_id=work.problem_id,
+                    )
+                    baseline_runtime_ms = _coerce_baseline_ms(baseline_entry)
+                    if baseline_runtime_ms is None and config.verbose:
+                        print(
+                            "[TIMING] Baseline timing entry missing numeric "
+                            f"value for problem {work.problem_id} in "
+                            f"{baseline_time_path}."
+                        )
+                except FileNotFoundError as exc:
+                    if config.verbose:
+                        print(f"[TIMING] {exc}")
+                except AssertionError as exc:
+                    if config.verbose:
+                        print(f"[TIMING] {exc}")
+
+
+
         # build the code agent system prompt (includes examples + ref kernel)
         code_agent_system_prompt = build_code_agent_system_prompt(
             config=config,
             ref_arch_src=ref_problem_src,
         )
 
-        # build agents
+
         code_agent = create_code_agent(
             **base_llm_opts,
             system_prompt=code_agent_system_prompt,
         )
         reviewer_agent = create_reviewer_agent(**base_llm_opts)
+
         prompt_agent_system_prompt = PROMPT_AGENT_SYSTEM_PROMPT.format(
             max_turn=config.max_turn,
         )
@@ -748,11 +986,8 @@ def init_and_run_graph(
             reviewer_agent_system_prompt=REVIEWER_AGENT_SYSTEM_PROMPT,
         )
 
-        thread_id_base = f"{work.problem_id}-{work.sample_id}-{process_id}"
-        code_thread_id = f"code-{thread_id_base}"
-        prompt_thread_id = f"prompt-{thread_id_base}"
 
-        # build graph
+
         graph = _init_state_machine_graph()
 
         # initialize state setup
@@ -784,16 +1019,21 @@ def init_and_run_graph(
             'code_agent': code_agent,
             'prompt_agent': prompt_agent,
             'reviewer_agent': reviewer_agent,
-            'code_thread_id': code_thread_id,
-            'prompt_thread_id': prompt_thread_id,
+            'mcts_tree': mcts_tree,
+            'baseline_runtime_ms': baseline_runtime_ms,
             'rag_index': rag_index,
+
         }
 
         initial_state: CaesarGraphState = {
             'conversation_info': conv_info,
             'current_turn': 1,
             'state_outcome': StateOutcome.EndRun,
+            'selected_node_id': mcts_tree.root_id,
+            'selected_node_path': [mcts_tree.root_id],
+            'current_node_id': mcts_tree.root_id,
         }
+
 
         # launch graph
         with trace(name=f'problem-{work.problem_id}-sample-{work.sample_id}'):
