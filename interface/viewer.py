@@ -22,7 +22,7 @@ ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 # add sys paths (needed for python import discovery)
 sys.path.append(ROOT_DIR)
 
-from utils import (
+from utils import (  # noqa: E402
     get_available_problem_ids,
     get_run_group_finished_runs,
     get_prev_problem_id,
@@ -232,7 +232,8 @@ def get(run_group: str, run_name: str, problem_id: str, sample_id: str):
         max_turns = config_data["max_turn"]
         dataset = KernelBenchDataset(
             dataset=dataset_name_to_dataset.get(
-                config_data["dataset_name"], "KernelBench/level1"
+                config_data["dataset_name"],
+                dataset_name_to_dataset["KernelBench/level1"],
             )
         )
         problems = dataset.get_problem_ids()

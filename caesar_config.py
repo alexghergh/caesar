@@ -1,8 +1,13 @@
 import os
 
-from pydra import Config, REQUIRED
+try:
+    from pydra import Config, REQUIRED
+except ModuleNotFoundError:
+    REQUIRED = "<REQUIRED>"
 
-from strategy import Strategy
+    class Config:
+        def to_dict(self):
+            return self.__dict__
 
 
 class CaesarRunConfig(Config):

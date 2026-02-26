@@ -25,7 +25,7 @@ ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 # add sys paths (needed for python import discovery)
 sys.path.append(ROOT_DIR)
 
-from utils import (
+from utils import (  # noqa: E402
     fetch_baseline_time_by_problem_id,
     get_turn_input_tokens,
     get_turn_output_tokens,

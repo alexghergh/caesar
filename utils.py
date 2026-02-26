@@ -97,7 +97,7 @@ def get_available_run_groups(base_dir: str) -> list:
                 if os.path.isdir(os.path.join(base_dir, d))
             ]
         )
-    except:
+    except OSError:
         return []
 
 
@@ -112,7 +112,7 @@ def get_available_runs(base_dir: str, run_group: str) -> list:
                 if os.path.isdir(os.path.join(group_dir, d))
             ]
         )
-    except:
+    except OSError:
         return []
 
 
@@ -120,14 +120,15 @@ def get_available_problem_ids(base_dir: str, run_group: str, run_name: str) -> l
     """Get list of available problems in the specified run group and run name directory."""
     run_dir = os.path.join(base_dir, run_group, run_name)
     try:
-        return sorted(
-            [
-                int(re.search(r"\d+", d).group())
-                for d in os.listdir(run_dir)
-                if os.path.isdir(os.path.join(run_dir, d))
-            ]
-        )
-    except:
+        problem_ids = []
+        for d in os.listdir(run_dir):
+            if not os.path.isdir(os.path.join(run_dir, d)):
+                continue
+            match = re.search(r"\d+", d)
+            if match is not None:
+                problem_ids.append(int(match.group()))
+        return sorted(problem_ids)
+    except OSError:
         return []
 
 

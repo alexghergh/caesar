@@ -1,21 +1,15 @@
 
 """
-Analyze at a particular run 
-of multi-turn caesar runs
-to get the fast_p score
+Analyze a particular run of multi-turn Caesar runs to get the fast_p score.
 """
 
-import numpy as np
-import pandas as pd
-import matplotlib.pyplot as plt
-import os, sys
-import json
+import os
 
-from utils.score import *
+import numpy as np
+from KernelBenchInternal.score import fastp
 
 import caesar.analysis.analysis_utils as analysis_utils
 from caesar.interface.run_mapping import RUN_MAPPING_LEVEL_1, RUN_MAPPING_LEVEL_2, RUN_MAPPING_LEVEL_3
-from caesar.utils import check_result_exists_run_path
 
 PATH_TO_REPO_DIR = os.path.join(os.path.dirname(__file__), "..", "..")
 

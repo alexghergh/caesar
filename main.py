@@ -1,58 +1,59 @@
+import multiprocessing as mp
 import os
 import time
-import multiprocessing as mp
 
-import torch
-import pydra
-from tqdm import tqdm
-
-from KernelBenchInternal.dataset import (
-    KernelBenchDataset,
-    KERNELBENCH_LEVEL_1_DATASET,
-    KERNELBENCH_LEVEL_1_SUBSET_DATASET,
-    KERNELBENCH_LEVEL_1_RANDOM_SUBSET_DATASET,
-    KERNELBENCH_LEVEL_2_DATASET,
-    KERNELBENCH_LEVEL_2_SUBSET_DATASET,
-    KERNELBENCH_LEVEL_2_RANDOM_SUBSET_DATASET,
-    KERNELBENCH_LEVEL_3_DATASET,
-    KERNELBENCH_LEVEL_3_SUBSET_DATASET,
-    KERNELBENCH_LEVEL_3_RANDOM_SUBSET_DATASET,
-    KERNELBENCH_LEVELS_12_REPRESENTATIVE_DATASET,
-    CUDAFORGE_SUBSET,
-    METASTARK_SUBSET,
-)
-
-from state_machine import run_state_machine
-from work import WorkArgs
 from caesar_config import CaesarRunConfig
 from orchestrator import GPUOrchestrator
+from work import WorkArgs
+
+try:
+    import pydra
+except ModuleNotFoundError:
+    pydra = None
 
 
 KERNEL_BENCH_PATH = os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..", "KernelBench")
 )
 
-dataset_name_to_dataset = {
-    "KernelBench/level1": KERNELBENCH_LEVEL_1_DATASET,
-    "KernelBench/level2": KERNELBENCH_LEVEL_2_DATASET,
-    "KernelBench/level3": KERNELBENCH_LEVEL_3_DATASET,
-    "KernelBench/level1-subset": KERNELBENCH_LEVEL_1_SUBSET_DATASET,
-    "KernelBench/level2-subset": KERNELBENCH_LEVEL_2_SUBSET_DATASET,
-    "KernelBench/level3-subset": KERNELBENCH_LEVEL_3_SUBSET_DATASET,
-    "KernelBench/level1-random": KERNELBENCH_LEVEL_1_RANDOM_SUBSET_DATASET,
-    "KernelBench/level2-random": KERNELBENCH_LEVEL_2_RANDOM_SUBSET_DATASET,
-    "KernelBench/level3-random": KERNELBENCH_LEVEL_3_RANDOM_SUBSET_DATASET,
 
-    "KernelBench/levels12-subset": KERNELBENCH_LEVELS_12_REPRESENTATIVE_DATASET,
+def _load_dataset_registry():
+    from KernelBenchInternal.dataset import (
+        CUDAFORGE_SUBSET,
+        KERNELBENCH_LEVEL_1_DATASET,
+        KERNELBENCH_LEVEL_1_RANDOM_SUBSET_DATASET,
+        KERNELBENCH_LEVEL_1_SUBSET_DATASET,
+        KERNELBENCH_LEVEL_2_DATASET,
+        KERNELBENCH_LEVEL_2_RANDOM_SUBSET_DATASET,
+        KERNELBENCH_LEVEL_2_SUBSET_DATASET,
+        KERNELBENCH_LEVEL_3_DATASET,
+        KERNELBENCH_LEVEL_3_RANDOM_SUBSET_DATASET,
+        KERNELBENCH_LEVEL_3_SUBSET_DATASET,
+        KERNELBENCH_LEVELS_12_REPRESENTATIVE_DATASET,
+        METASTARK_SUBSET,
+        KernelBenchDataset,
+    )
 
-    "KernelBench/cudaforge-subset": CUDAFORGE_SUBSET,
-    "KernelBench/metastark-subset": METASTARK_SUBSET,
+    dataset_name_to_dataset = {
+        "KernelBench/level1": KERNELBENCH_LEVEL_1_DATASET,
+        "KernelBench/level2": KERNELBENCH_LEVEL_2_DATASET,
+        "KernelBench/level3": KERNELBENCH_LEVEL_3_DATASET,
+        "KernelBench/level1-subset": KERNELBENCH_LEVEL_1_SUBSET_DATASET,
+        "KernelBench/level2-subset": KERNELBENCH_LEVEL_2_SUBSET_DATASET,
+        "KernelBench/level3-subset": KERNELBENCH_LEVEL_3_SUBSET_DATASET,
+        "KernelBench/level1-random": KERNELBENCH_LEVEL_1_RANDOM_SUBSET_DATASET,
+        "KernelBench/level2-random": KERNELBENCH_LEVEL_2_RANDOM_SUBSET_DATASET,
+        "KernelBench/level3-random": KERNELBENCH_LEVEL_3_RANDOM_SUBSET_DATASET,
+        "KernelBench/levels12-subset": KERNELBENCH_LEVELS_12_REPRESENTATIVE_DATASET,
+        "KernelBench/cudaforge-subset": CUDAFORGE_SUBSET,
+        "KernelBench/metastark-subset": METASTARK_SUBSET,
+        # debug
+        "KernelBench/level1-test": [
+            os.path.join(KERNEL_BENCH_PATH, "KernelBench", "level1", "23_Softmax.py")
+        ],
+    }
 
-    # debug
-    "KernelBench/level1-test": [
-        os.path.join(KERNEL_BENCH_PATH, "KernelBench", "level1", "23_Softmax.py")
-    ],
-}
+    return KernelBenchDataset, dataset_name_to_dataset
 
 
 def launch_state_machine_process(
@@ -67,54 +68,51 @@ def launch_state_machine_process(
     multiprocessing context. Each worker works on a problem, with all its
     samples.
     """
-    # launch state machine
+    from state_machine import run_state_machine
+
     run_state_machine(os.getpid(), config, work, orchestrator, progress, proc_sem)
 
 
-@pydra.main(base=CaesarRunConfig)
-def main(config: CaesarRunConfig):
-    # TODOs:
-    # - right now, the samples per problem are independent (i.e. each separately
-    # queries the model and continues iterating); in the (near) future i want to
-    # be able to have best-k selection, i.e. after each round, pool together the
-    # best k/total samples, then randomly distribute those best-k and start the
-    # next round from there; in theory, it looks like you just need to open the
-    # config files for all samples, pick the best, then re-write the config
-    # files; anything else to consider? There will be stalls and dependencies if
-    # some samples did not finish
-    # - CoT/ICL examples of progressive optimization
-    # - RAG
-    # - hardware architecture information
-    # - state machine run orchestrator
-    # - ncu / nsys profiling instead of torch
+def _run_main(config: CaesarRunConfig) -> None:
+    missing_dependencies = []
+    for module_name in ("torch", "tqdm", "KernelBenchInternal"):
+        try:
+            __import__(module_name)
+        except ModuleNotFoundError:
+            missing_dependencies.append(module_name)
+
+    if missing_dependencies:
+        missing = ", ".join(sorted(missing_dependencies))
+        print(
+            f"Missing required runtime dependencies: {missing}. "
+            "Install project dependencies and re-run."
+        )
+        return
+
+    from tqdm import tqdm
+
+    KernelBenchDataset, dataset_name_to_dataset = _load_dataset_registry()
 
     if config.verbose:
         print("Running with config: ", config)
 
     dataset = KernelBenchDataset(
-        dataset_name_to_dataset.get(config.dataset_name, "KernelBench/level1")
+        dataset_name_to_dataset.get(
+            config.dataset_name,
+            dataset_name_to_dataset["KernelBench/level1"],
+        )
     )
 
     if config.verbose:
         print(f"There are {len(dataset) * config.num_samples} total samples to solve")
 
-    # global, for all problems
-    orchestrator = GPUOrchestrator(
-        num_gpus=config.num_gpus, verbose=config.verbose
-    )
+    orchestrator = GPUOrchestrator(num_gpus=config.num_gpus, verbose=config.verbose)
 
-    # track global problem progress
-    progress = mp.Value('i', 0, lock=True)
-
-    # semaphore to limit process launching (this only applies to each state
-    # machine launching sub-processes to solve samples)
+    progress = mp.Value("i", 0, lock=True)
     proc_sem = mp.Semaphore(value=config.num_workers)
 
-    # launch state machine workers, 1 per problem
     workers_list = []
     for problem_id in dataset.get_problem_ids():
-
-        # create work args
         workargs = WorkArgs(
             problem_id=problem_id,
             sample_id=-1,
@@ -122,7 +120,6 @@ def main(config: CaesarRunConfig):
         )
         workargs.problem_path = dataset.get_problem_path_by_id(workargs.problem_id)
 
-        # launch state machine process
         worker_proc = mp.Process(
             target=launch_state_machine_process,
             args=(config, orchestrator, workargs, progress, proc_sem),
@@ -131,7 +128,6 @@ def main(config: CaesarRunConfig):
         worker_proc.start()
         workers_list.append(worker_proc)
 
-    # tqdm progress tracker
     with tqdm(
         total=len(dataset) * config.num_samples,
         desc="Overall progress (per sample)",
@@ -143,11 +139,34 @@ def main(config: CaesarRunConfig):
                 pbar.update(progress.value)
                 progress.value = 0
 
-    # wait for all state machine workers to finish
     for worker_proc in workers_list:
         worker_proc.join()
 
 
-if __name__ == '__main__':
-    torch.multiprocessing.set_start_method('spawn')
+if pydra is not None:
+    @pydra.main(base=CaesarRunConfig)
+    def main(config: CaesarRunConfig):
+        _run_main(config)
+else:
+    def main(config: CaesarRunConfig | None = None):
+        if config is None:
+            print(
+                "pydra is not installed. Install project dependencies to run this CLI."
+            )
+            return
+        _run_main(config)
+
+
+if __name__ == "__main__":
+    try:
+        import torch
+    except ModuleNotFoundError:
+        torch = None
+
+    if torch is not None:
+        try:
+            torch.multiprocessing.set_start_method("spawn")
+        except RuntimeError:
+            pass
+
     main()
